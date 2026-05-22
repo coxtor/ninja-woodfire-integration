@@ -1,0 +1,89 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Ninja Woodfire",
+        "description": "Sign in with your Ninja Kitchen account. Leave the four advanced fields below empty unless the bundled defaults stop working — see the project README for the extractor script if you need to override them.",
+        "data": {
+          "email": "Email",
+          "password": "Password",
+          "region": "Region",
+          "auth0_audience": "Auth0 audience (optional)",
+          "auth0_client_id": "Auth0 client ID (optional)",
+          "ayla_app_id": "Cloud app ID (optional)",
+          "ayla_app_secret": "Cloud app secret (optional)"
+        }
+      },
+      "pick_device": {
+        "title": "Pick a grill",
+        "data": {
+          "dsn": "Grill"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Invalid email or password.",
+      "cannot_connect": "Cannot reach Ninja cloud.",
+      "no_devices": "No grills found on this account.",
+      "unknown": "Unexpected error."
+    },
+    "abort": {
+      "already_configured": "This grill is already configured."
+    }
+  },
+  "entity": {
+    "sensor": {
+      "grill_temp": { "name": "Grill temperature" },
+      "air_temp": { "name": "Air temperature" },
+      "smoke_temp": { "name": "Smoke temperature" },
+      "grill_state": { "name": "Grill state" },
+      "cook_state": { "name": "Cook state" },
+      "active_mode": { "name": "Active cook mode" },
+      "setpoint": { "name": "Active setpoint" },
+      "seconds_left": { "name": "Time remaining" },
+      "end_time": { "name": "Cook ends at" },
+      "cook_progress": { "name": "Cook progress" },
+      "error_code": { "name": "Error code" },
+      "probe0_temp": { "name": "Probe 1 temperature" },
+      "probe1_temp": { "name": "Probe 2 temperature" },
+      "probe0_progress": { "name": "Probe 1 progress" },
+      "probe1_progress": { "name": "Probe 2 progress" },
+      "probe0_setpoint": { "name": "Probe 1 active target" },
+      "probe1_setpoint": { "name": "Probe 2 active target" },
+      "probe0_state": { "name": "Probe 1 state" },
+      "probe1_state": { "name": "Probe 2 state" },
+      "event_mask": { "name": "Event mask" },
+      "message": { "name": "Message" },
+      "firmware_version": { "name": "Firmware version" },
+      "oem_model": { "name": "Model" },
+      "dsn": { "name": "Device serial (DSN)" }
+    },
+    "binary_sensor": {
+      "lid_open": { "name": "Lid" },
+      "probe0_plugged_in": { "name": "Probe 1 connected" },
+      "probe1_plugged_in": { "name": "Probe 2 connected" },
+      "probe0_active": { "name": "Probe 1 active" },
+      "probe1_active": { "name": "Probe 2 active" }
+    },
+    "select": {
+      "cook_mode": { "name": "Cook mode" }
+    },
+    "number": {
+      "cook_temp": { "name": "Cook temp / heat level" },
+      "cook_duration": { "name": "Cook duration" },
+      "probe0_target_temp": { "name": "Probe 1 target temp" },
+      "probe1_target_temp": { "name": "Probe 2 target temp" }
+    },
+    "switch": {
+      "cook_smoke": { "name": "Add smoke (Woodfire)" },
+      "cook_skip_preheat": { "name": "Skip preheat" },
+      "probe0_enabled": { "name": "Probe 1 target enabled" },
+      "probe1_enabled": { "name": "Probe 2 target enabled" }
+    },
+    "button": {
+      "start_cook": { "name": "Start cook" },
+      "stop_cook": { "name": "Stop cook" },
+      "skip_preheat": { "name": "Skip preheat" }
+    }
+  }
+}

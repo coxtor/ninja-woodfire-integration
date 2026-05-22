@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.DS_Store
+*.log
+
+# Extractor output — contains app credentials, never commit.
+ninja_woodfire_credentials.txt
+*.creds.txt

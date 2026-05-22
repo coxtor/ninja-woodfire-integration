@@ -1,0 +1,12 @@
+{
+  "domain": "ninja_woodfire",
+  "name": "Ninja Woodfire",
+  "version": "0.1.0",
+  "documentation": "https://github.com/coxtor/ninja-woodfire-integration",
+  "issue_tracker": "https://github.com/coxtor/ninja-woodfire-integration/issues",
+  "codeowners": ["@coxtor"],
+  "config_flow": true,
+  "iot_class": "cloud_polling",
+  "requirements": ["aiohttp>=3.9.0"],
+  "integration_type": "device"
+}

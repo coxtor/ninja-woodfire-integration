@@ -1,0 +1,90 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Ninja Woodfire",
+        "description": "Mit deinem Ninja-Kitchen-Account anmelden. Die vier erweiterten Felder leer lassen — sie sind nur ein Fallback falls die mitgelieferten Defaults nicht mehr funktionieren. Anleitung zum selbst-Extrahieren in der Projekt-README.",
+        "data": {
+          "email": "E-Mail",
+          "password": "Passwort",
+          "region": "Region",
+          "auth0_audience": "Auth0 Audience (optional)",
+          "auth0_client_id": "Auth0 Client-ID (optional)",
+          "ayla_app_id": "Cloud-App-ID (optional)",
+          "ayla_app_secret": "Cloud-App-Secret (optional)"
+        }
+      },
+      "pick_device": {
+        "title": "Grill auswählen",
+        "data": {
+          "dsn": "Grill"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Falsche E-Mail oder Passwort.",
+      "cannot_connect": "Ninja-Cloud nicht erreichbar.",
+      "no_devices": "Kein Grill in diesem Account gefunden.",
+      "unknown": "Unerwarteter Fehler."
+    },
+    "abort": {
+      "already_configured": "Dieser Grill ist bereits eingerichtet."
+    }
+  },
+  "entity": {
+    "sensor": {
+      "grill_temp": { "name": "Grill-Temperatur" },
+      "air_temp": { "name": "Lufttemperatur" },
+      "smoke_temp": { "name": "Rauchtemperatur" },
+      "grill_state": { "name": "Grill-Status" },
+      "cook_state": { "name": "Kochstatus" },
+      "active_mode": { "name": "Aktiver Kochmodus" },
+      "setpoint": { "name": "Aktueller Sollwert" },
+      "seconds_left": { "name": "Restzeit (Sekunden)" },
+      "end_time": { "name": "Kochende um" },
+      "cook_progress": { "name": "Kochfortschritt" },
+      "preheat_progress": { "name": "Vorheiz-Fortschritt" },
+      "error_code": { "name": "Fehlercode" },
+      "probe0_temp": { "name": "Sonde 1 Temperatur" },
+      "probe1_temp": { "name": "Sonde 2 Temperatur" },
+      "probe0_progress": { "name": "Sonde 1 Fortschritt" },
+      "probe1_progress": { "name": "Sonde 2 Fortschritt" },
+      "probe0_setpoint": { "name": "Sonde 1 Zieltemp (aktiv)" },
+      "probe1_setpoint": { "name": "Sonde 2 Zieltemp (aktiv)" },
+      "probe0_state": { "name": "Sonde 1 Status" },
+      "probe1_state": { "name": "Sonde 2 Status" },
+      "event_mask": { "name": "Event-Maske" },
+      "message": { "name": "Nachricht" },
+      "firmware_version": { "name": "Firmware-Version" },
+      "oem_model": { "name": "Modell" },
+      "dsn": { "name": "Geräte-Seriennr. (DSN)" }
+    },
+    "binary_sensor": {
+      "lid_open": { "name": "Deckel" },
+      "probe0_plugged_in": { "name": "Sonde 1 angeschlossen" },
+      "probe1_plugged_in": { "name": "Sonde 2 angeschlossen" },
+      "probe0_active": { "name": "Sonde 1 aktiv" },
+      "probe1_active": { "name": "Sonde 2 aktiv" }
+    },
+    "select": {
+      "cook_mode": { "name": "Kochmodus" }
+    },
+    "number": {
+      "cook_temp": { "name": "Temperatur / Heizstufe" },
+      "cook_duration": { "name": "Kochzeit" },
+      "probe0_target_temp": { "name": "Sonde 1 Zieltemp" },
+      "probe1_target_temp": { "name": "Sonde 2 Zieltemp" }
+    },
+    "switch": {
+      "cook_smoke": { "name": "Rauch hinzufügen (Woodfire)" },
+      "cook_skip_preheat": { "name": "Vorheizen überspringen" },
+      "probe0_enabled": { "name": "Sonde 1 Ziel aktiv" },
+      "probe1_enabled": { "name": "Sonde 2 Ziel aktiv" }
+    },
+    "button": {
+      "start_cook": { "name": "Cook starten" },
+      "stop_cook": { "name": "Cook stoppen" },
+      "skip_preheat": { "name": "Vorheizen überspringen" }
+    }
+  }
+}
