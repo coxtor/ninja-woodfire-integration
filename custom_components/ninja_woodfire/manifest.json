@@ -1,7 +1,7 @@
 {
   "domain": "ninja_woodfire",
   "name": "Ninja Woodfire",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "documentation": "https://github.com/coxtor/ninja-woodfire-integration",
   "issue_tracker": "https://github.com/coxtor/ninja-woodfire-integration/issues",
   "codeowners": ["@coxtor"],

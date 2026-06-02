@@ -18,6 +18,7 @@ from .const import (
     EVENT_COOK_HALFTIME,
     EVENT_COOK_STARTED,
     EVENT_PREHEAT_COMPLETE,
+    EVENT_PROBE_HALFWAY,
     EVENT_PROBE_TARGET_REACHED,
     SCAN_INTERVAL_ACTIVE,
     SCAN_INTERVAL_IDLE,
@@ -67,6 +68,7 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
         self._prev_cook_state: str | None = None
         self._halftime_fired: bool = False
         self._probe_target_fired: dict[int, bool] = {0: False, 1: False}
+        self._probe_halfway_fired: dict[int, bool] = {0: False, 1: False}
 
     async def _async_update_data(self) -> CombinedState:
         try:
@@ -116,6 +118,7 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
         ):
             self._halftime_fired = False
             self._probe_target_fired = {0: False, 1: False}
+            self._probe_halfway_fired = {0: False, 1: False}
             self.hass.bus.async_fire(
                 EVENT_COOK_STARTED,
                 {
@@ -167,6 +170,7 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
             )
             self._halftime_fired = False
             self._probe_target_fired = {0: False, 1: False}
+            self._probe_halfway_fired = {0: False, 1: False}
 
         # Probe target reached: per-probe one-shot when current temp
         # crosses the manual setpoint while the probe is active. Fires
@@ -179,6 +183,24 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
                 target = probe.target.setpoint
                 if target is None:
                     continue
+
+                # Probe halfway: fire once when reaching 50% of target temp
+                if not self._probe_halfway_fired.get(idx):
+                    halfway = target / 2
+                    if probe.temp >= halfway:
+                        self._probe_halfway_fired[idx] = True
+                        self.hass.bus.async_fire(
+                            EVENT_PROBE_HALFWAY,
+                            {
+                                "dsn": self.dsn,
+                                "probe_index": idx,
+                                "target": target,
+                                "halfway": halfway,
+                                "current": probe.temp,
+                            },
+                        )
+
+                # Probe target reached
                 if self._probe_target_fired.get(idx):
                     continue
                 if probe.temp >= target:
