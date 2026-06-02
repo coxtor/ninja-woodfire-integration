@@ -1,4 +1,14 @@
-"""State models populated from the cloud's JSON-encoded state."""
+"""Transport-agnostic state models.
+
+The grill firmware exposes its state as JSON-encoded strings in three Ayla
+properties (`GET_GrillState`, `GET_CookState`, `GET_ProbeState`). The same
+data eventually comes over BLE as bincode-encoded structs. Both transports
+hydrate into the dataclasses below — entities don't care which transport
+was used.
+
+All fields are observed in real captures; semantics are documented in
+docs/API.md § 3.1 (state schemas).
+"""
 from __future__ import annotations
 
 import json
@@ -7,7 +17,7 @@ from typing import Any
 
 
 def _parse_value(raw: Any) -> dict[str, Any]:
-    """The cloud wraps the JSON state in a string. Tolerate both string + dict."""
+    """Ayla wraps the JSON state in a string. Tolerate both string + dict."""
     if isinstance(raw, dict):
         return raw
     if isinstance(raw, str):
@@ -147,19 +157,32 @@ class ProbeMode:
     mode: str = "none"             # none | manual | preset
     setpoint: int | None = None    # target temperature in °C (manual mode)
     preset_index: int | None = None
-    protein: int | None = None     # ProteinKind enum: Beef|Poultry|Chicken|… (preset mode)
-    cut: int | None = None
-    doneness: int | None = None    # Doneness enum: Rare|MedRare|Med|MedWell|Well
+    protein: int | str | None = None     # ProteinKind enum or string: Beef|Poultry|Chicken|…
+    cut: int | str | None = None
+    doneness: int | str | None = None    # Doneness enum or string: Rare|MedRare|Med|MedWell|Well
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "ProbeMode":
+        def _parse_int_or_str(value: Any) -> int | str | None:
+            """Parse field that can be either int enum or string name."""
+            if value is None:
+                return None
+            if isinstance(value, int):
+                return value
+            if isinstance(value, str):
+                try:
+                    return int(value)
+                except ValueError:
+                    return value
+            return None
+
         return cls(
             mode=str(d.get("mode", "none")) if d else "none",
             setpoint=int(d["setpoint"]) if d and "setpoint" in d else None,
             preset_index=int(d["preset_index"]) if d and "preset_index" in d else None,
-            protein=int(d["protein"]) if d and "protein" in d else None,
-            cut=int(d["cut"]) if d and "cut" in d else None,
-            doneness=int(d["doneness"]) if d and "doneness" in d else None,
+            protein=_parse_int_or_str(d.get("protein")) if d else None,
+            cut=_parse_int_or_str(d.get("cut")) if d else None,
+            doneness=_parse_int_or_str(d.get("doneness")) if d else None,
         )
 
 
