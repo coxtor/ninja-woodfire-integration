@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <!-- Grill body -->
+  <rect x="48" y="100" width="160" height="80" rx="8" fill="#2c2c2c" stroke="#4a4a4a" stroke-width="3"/>
+
+  <!-- Grill lid -->
+  <path d="M 48 100 Q 128 40 208 100" fill="#3a3a3a" stroke="#4a4a4a" stroke-width="3"/>
+
+  <!-- Grill grate lines -->
+  <line x1="70" y1="120" x2="186" y2="120" stroke="#666" stroke-width="2"/>
+  <line x1="70" y1="135" x2="186" y2="135" stroke="#666" stroke-width="2"/>
+  <line x1="70" y1="150" x2="186" y2="150" stroke="#666" stroke-width="2"/>
+
+  <!-- Temperature display -->
+  <rect x="100" y="60" width="56" height="28" rx="4" fill="#ff6b35" opacity="0.9"/>
+  <text x="128" y="79" text-anchor="middle" fill="white" font-family="Arial, sans-serif" font-size="16" font-weight="bold">180°</text>
+
+  <!-- Smoke particles -->
+  <circle cx="90" cy="35" r="4" fill="#888" opacity="0.6"/>
+  <circle cx="100" cy="25" r="5" fill="#888" opacity="0.5"/>
+  <circle cx="110" cy="20" r="3" fill="#888" opacity="0.4"/>
+  <circle cx="145" cy="25" r="4" fill="#888" opacity="0.5"/>
+  <circle cx="155" cy="20" r="5" fill="#888" opacity="0.4"/>
+  <circle cx="165" cy="30" r="3" fill="#888" opacity="0.6"/>
+
+  <!-- Legs -->
+  <rect x="70" y="180" width="8" height="40" rx="2" fill="#2c2c2c"/>
+  <rect x="178" y="180" width="8" height="40" rx="2" fill="#2c2c2c"/>
+
+  <!-- Wood/flame accent -->
+  <path d="M 120 155 Q 128 145 136 155" fill="#ff6b35" opacity="0.7"/>
+  <path d="M 115 162 Q 128 150 141 162" fill="#ff8c42" opacity="0.6"/>
+</svg>
