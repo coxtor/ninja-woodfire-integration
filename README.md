@@ -6,9 +6,13 @@
 > See [Status & support](#status--support) and [Disclaimer](#disclaimer)
 > below before installing.
 
+> **Note:** This is primarily a Claude-assisted project.
+
 Home Assistant integration for the Ninja Woodfire Connect Pro XL
 outdoor grill. Connects via your Ninja Kitchen account; no local
 network access to the grill is required.
+
+For a custom Lovelace card, see [ninja-woodfire-card](https://github.com/coxtor/ninja-woodfire-card).
 
 ## Features
 
