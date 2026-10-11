@@ -241,7 +241,7 @@ class AylaCloudClient:
         state.last_updated_at = latest_update
         if (device := await self._cached_device(dsn)) is not None:
             state.connection_status = device.get("connection_status")
-            state.online = str(state.connection_status).casefold() == "online"
+            state.online = str(state.connection_status).casefold() != "offline"
         return state
 
     async def set_property_datapoint(

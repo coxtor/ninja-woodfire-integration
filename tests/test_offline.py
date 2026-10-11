@@ -79,7 +79,7 @@ async def test_bug_report_snapshot_is_reported_offline(hass, aioclient_mock):
         assert state.temp_is_plausible(getattr(state.grill.temps, name), name) is False
 
 
-@pytest.mark.parametrize(("status", "online"), [("Online", True), ("online", True), ("Offline", False)])
+@pytest.mark.parametrize(("status", "online"), [("Online", True), ("online", True), ("Offline", False), (None, True)])
 async def test_connection_status_maps_to_online(hass, aioclient_mock, status, online):
     _serve(aioclient_mock, "idle_offline", {"connection_status": status})
     state = await _client(hass).get_combined_state("X")
