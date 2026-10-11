@@ -55,19 +55,20 @@ class GrillTemps:
 
     The firmware sends grill/air/smoke/probeN_a/probeN_b in °F (unlike
     `setpoint` and `ProbeInfo.temp`, which are already °C); `from_wire`
-    converts them. probeN_a/probeN_b are dual-element raw probe readings
-    (averaged into the per-probe `temp` field).
+    converts them. Missing, invalid or non-positive °F readings (unused
+    channels, unplugged probe elements) become None. probeN_a/probeN_b are
+    dual-element raw probe readings (averaged into the per-probe `temp` field).
     main/ui are PCB analog reads, NOT temperatures despite the unit confusion
     you'd think — values like 6542.4 are ADC counts × 0.1.
     """
 
-    grill: float = 0.0
-    air: float = 0.0
-    smoke: float = 0.0
-    probe0_a: float = 0.0
-    probe0_b: float = 0.0
-    probe1_a: float = 0.0
-    probe1_b: float = 0.0
+    grill: float | None = None
+    air: float | None = None
+    smoke: float | None = None
+    probe0_a: float | None = None
+    probe0_b: float | None = None
+    probe1_a: float | None = None
+    probe1_b: float | None = None
     main: float = 0.0  # PCB ADC, not °C
     ui: float = 0.0    # PCB ADC, not °C
 
@@ -76,10 +77,10 @@ class GrillTemps:
         values = {}
         for name in vars(cls()):
             value = _float(raw.get(name), None)
-            if value is None:
+            if name in FAHRENHEIT_TEMP_FIELDS:
+                value = round((value - 32) * 5 / 9, 1) if value and value > 0 else None
+            elif value is None:
                 value = 0.0
-            elif name in FAHRENHEIT_TEMP_FIELDS:
-                value = round((value - 32) * 5 / 9, 1)
             values[name] = value
         return cls(**values)
 
@@ -285,7 +286,7 @@ class CombinedState:
         "air crisp", "bake", "roast", "reheat", "dehydrate",
     })
 
-    def temp_is_plausible(self, value: float, name: str = "grill") -> bool:
+    def temp_is_plausible(self, value: float | None, name: str = "grill") -> bool:
         """Whether a temperature reading should be shown.
 
         Args:

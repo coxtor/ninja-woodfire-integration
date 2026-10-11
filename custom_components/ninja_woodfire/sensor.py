@@ -102,7 +102,7 @@ def _preheat_progress(state: CombinedState) -> int | None:
     return state.cook.progress
 
 
-def _plausible_temp(state: CombinedState, raw: float, name: str = "grill") -> float | None:
+def _plausible_temp(state: CombinedState, raw: float | None, name: str = "grill") -> float | None:
     """Hide stale-cache, idle-cached, or mode-irrelevant readings.
 
     `name` is "grill", "air", or "smoke" — drives which physical

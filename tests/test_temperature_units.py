@@ -14,7 +14,7 @@ from custom_components.ninja_woodfire._lib.models import (
     GrillState,
     GrillTemps,
 )
-from custom_components.ninja_woodfire.sensor import _plausible_temp
+from custom_components.ninja_woodfire.sensor import SENSORS, NinjaSensor, _plausible_temp
 
 from .conftest import cooking, mk_state, probe
 
@@ -43,10 +43,18 @@ def test_pcb_channels_are_untouched() -> None:
     assert FAHRENHEIT_TEMP_FIELDS == set(vars(GrillTemps())) - {"main", "ui"}
 
 
-def test_invalid_values_fall_back_to_zero() -> None:
+def test_invalid_values_are_unknown() -> None:
     temps = GrillTemps.from_wire({"grill": "nan", "air": None, "main": "x"})
-    assert temps.grill == 0.0
-    assert temps.air == 0.0
+    assert temps.grill is None
+    assert temps.air is None
+    assert temps.main == 0.0
+
+
+@pytest.mark.parametrize("raw", [0, -5])
+def test_non_positive_fahrenheit_is_unknown(raw: float) -> None:
+    temps = GrillTemps.from_wire({"probe0_a": raw, "grill": raw, "main": 0})
+    assert temps.probe0_a is None
+    assert temps.grill is None
     assert temps.main == 0.0
 
 
@@ -85,5 +93,14 @@ def test_cook_reading_is_converted() -> None:
     assert _plausible_temp(state, state.grill.temps.air, "air") == 195.7
 
 
-def test_missing_temps_stay_zero_not_minus_17_8() -> None:
-    assert GrillTemps.from_wire({}) == GrillTemps()
+def test_missing_temps_are_unknown() -> None:
+    temps = GrillTemps.from_wire({})
+    assert all(getattr(temps, f) is None for f in FAHRENHEIT_TEMP_FIELDS)
+    assert (temps.main, temps.ui) == (0.0, 0.0)
+
+
+async def test_missing_temp_sensor_shows_unknown(coordinator) -> None:
+    coordinator.data = mk_state(grill={"state": "idle", **_temps(air=72)})
+    sensors = {d.key: NinjaSensor(coordinator, d) for d in SENSORS}
+    assert sensors["grill_temp"].native_value is None
+    assert sensors["air_temp"].native_value == 22.2
