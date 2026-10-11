@@ -14,6 +14,13 @@
           "ayla_app_secret": "Cloud app secret (optional)"
         }
       },
+      "reauth_confirm": {
+        "title": "Re-authenticate",
+        "description": "The Ninja cloud rejected the stored login for {email}. Enter your current password.",
+        "data": {
+          "password": "Password"
+        }
+      },
       "pick_device": {
         "title": "Pick a grill",
         "data": {
@@ -28,7 +35,8 @@
       "unknown": "Unexpected error."
     },
     "abort": {
-      "already_configured": "This grill is already configured."
+      "already_configured": "This grill is already configured.",
+      "reauth_successful": "Re-authentication was successful."
     }
   },
   "entity": {
@@ -43,6 +51,7 @@
       "seconds_left": { "name": "Time remaining" },
       "end_time": { "name": "Cook ends at" },
       "cook_progress": { "name": "Cook progress" },
+      "preheat_progress": { "name": "Preheat progress" },
       "error_code": { "name": "Error code" },
       "probe0_temp": { "name": "Probe 1 temperature" },
       "probe1_temp": { "name": "Probe 2 temperature" },

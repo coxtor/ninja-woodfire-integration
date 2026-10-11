@@ -21,14 +21,18 @@ For a custom Lovelace card, see [ninja-woodfire-card](https://github.com/coxtor/
   per-probe status & target.
 - Cook controls: start, stop, skip-preheat. Mode-aware temperature
   number (heat-level for grill, °C for everything else). Duration,
-  smoke, per-probe targets.
-- Adaptive polling — fast while cooking, relaxed while idle.
-- Auto-reconnect on token expiry.
+  smoke, per-probe targets — changes during a running cook are applied
+  live and keep heat level, probe targets and elapsed time.
+- Adaptive polling — every 3 s while cooking, 10 s while idle.
+- Auto-reconnect on token expiry; re-authentication prompt when the
+  password changes.
 - HA event-bus events for automations:
   - `ninja_woodfire_cook_started`
   - `ninja_woodfire_preheat_complete`
   - `ninja_woodfire_cook_halftime`
   - `ninja_woodfire_cook_done`
+  - `ninja_woodfire_probe_halfway` (halfway from the probe's start
+    temperature to its target)
   - `ninja_woodfire_probe_target_reached`
 
 ## Tested models

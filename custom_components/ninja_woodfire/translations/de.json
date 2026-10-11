@@ -14,6 +14,13 @@
           "ayla_app_secret": "Cloud-App-Secret (optional)"
         }
       },
+      "reauth_confirm": {
+        "title": "Erneut anmelden",
+        "description": "Die Ninja-Cloud hat die gespeicherte Anmeldung für {email} abgelehnt. Bitte aktuelles Passwort eingeben.",
+        "data": {
+          "password": "Passwort"
+        }
+      },
       "pick_device": {
         "title": "Grill auswählen",
         "data": {
@@ -28,7 +35,8 @@
       "unknown": "Unerwarteter Fehler."
     },
     "abort": {
-      "already_configured": "Dieser Grill ist bereits eingerichtet."
+      "already_configured": "Dieser Grill ist bereits eingerichtet.",
+      "reauth_successful": "Erneute Anmeldung erfolgreich."
     }
   },
   "entity": {

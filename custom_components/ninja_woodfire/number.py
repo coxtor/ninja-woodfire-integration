@@ -1,32 +1,26 @@
 """Cook-temp / duration / probe-target setters."""
 from __future__ import annotations
 
-from collections.abc import Callable
-from dataclasses import dataclass
-from typing import Any
 
 from homeassistant.components.number import (
     NumberEntity,
-    NumberEntityDescription,
     NumberMode,
 )
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import UnitOfTemperature, UnitOfTime
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import DOMAIN
-from .coordinator import NinjaWoodfireCoordinator
+from .coordinator import NinjaWoodfireConfigEntry, NinjaWoodfireCoordinator
 from .entity import NinjaWoodfireEntity
 
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
+    entry: NinjaWoodfireConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    coordinator: NinjaWoodfireCoordinator = hass.data[DOMAIN][entry.entry_id]
+    coordinator = entry.runtime_data
     entities: list[NumberEntity] = [
         CookDurationNumber(coordinator),
         CookTempNumber(coordinator),
@@ -73,8 +67,6 @@ class CookDurationNumber(NinjaWoodfireEntity, NumberEntity):
         # Active cook: re-issues with new total duration (preserves
         # the cook in progress). Idle: stages for next start.
         await self.coordinator.async_modify_cook(seconds=int(value * 60))
-        self.coordinator.cook_setting_seconds = int(value * 60)
-        self.async_write_ha_state()
 
 
 class CookTempNumber(NinjaWoodfireEntity, NumberEntity):
@@ -136,8 +128,6 @@ class CookTempNumber(NinjaWoodfireEntity, NumberEntity):
 
     async def async_set_native_value(self, value: float) -> None:
         await self.coordinator.async_modify_cook(temp=int(value))
-        self.coordinator.cook_setting_temp = int(value)
-        self.async_write_ha_state()
 
 
 class ProbeSetpointNumber(NinjaWoodfireEntity, NumberEntity):
@@ -165,14 +155,7 @@ class ProbeSetpointNumber(NinjaWoodfireEntity, NumberEntity):
 
     @property
     def native_value(self) -> float:
-        if self._probe_index == 0:
-            return float(self.coordinator.cook_setting_probe0_setpoint)
-        return float(self.coordinator.cook_setting_probe1_setpoint)
+        return float(self.coordinator.live_or_staged_probe_setpoint(self._probe_index))
 
     async def async_set_native_value(self, value: float) -> None:
-        v = int(value)
-        if self._probe_index == 0:
-            self.coordinator.cook_setting_probe0_setpoint = v
-        else:
-            self.coordinator.cook_setting_probe1_setpoint = v
-        self.async_write_ha_state()
+        await self.coordinator.async_set_probe(self._probe_index, setpoint=int(value))

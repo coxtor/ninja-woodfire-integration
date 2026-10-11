@@ -1,38 +1,28 @@
 """Cook-config switches: smoke add-on, skip preheat, probe enable.
 
-Most of these hold session-only state in the coordinator — they don't write
-to the cloud directly. The "Start cook" button reads them when sending the
-SET_Cook_Command. This matches how the official app works.
-
-Exception: the **skip-preheat switch** is context-aware. While the grill is
-in `preheat`, flipping it to ON immediately re-issues the cook command with
-`skip preheat: 1` (the firmware accepts that and jumps to the cook phase).
-While idle, it just stages the flag for the next Start press.
+While idle these stage settings for the next Start press. During a cook,
+smoke and probe changes are applied live; flipping skip-preheat ON while
+preheating skips the preheat phase immediately.
 """
 from __future__ import annotations
 
-import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
 from homeassistant.components.switch import SwitchEntity, SwitchEntityDescription
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import DOMAIN
-from .coordinator import NinjaWoodfireCoordinator
+from .coordinator import NinjaWoodfireConfigEntry, NinjaWoodfireCoordinator, is_preheating
 from .entity import NinjaWoodfireEntity
-
-_LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, kw_only=True)
 class NinjaSwitchDescription(SwitchEntityDescription):
     get_fn: Callable[[NinjaWoodfireCoordinator], bool]
-    set_fn: Callable[[NinjaWoodfireCoordinator, bool], None]
+    set_fn: Callable[[NinjaWoodfireCoordinator, bool], None] | None = None
     available_fn: Callable[[NinjaWoodfireCoordinator], bool] | None = None
     # Optional async post-set hook. Lets a switch trigger a real cloud action
     # (e.g. skip-preheat re-issues the cook command if currently preheating).
@@ -42,9 +32,6 @@ class NinjaSwitchDescription(SwitchEntityDescription):
 # ---------------------------------------------------------------------------
 # Post-set hooks (must be defined before SWITCHES references them)
 # ---------------------------------------------------------------------------
-
-_PREHEAT_STATES = frozenset({"preheat", "preheating", "start", "ignition"})
-
 
 async def _maybe_skip_preheat_now(
     coordinator: NinjaWoodfireCoordinator, new_value: bool
@@ -60,18 +47,8 @@ async def _maybe_skip_preheat_now(
     """
     if not new_value:
         return
-    state = coordinator.data
-    if state is None:
-        return
-    if (
-        state.grill.state in _PREHEAT_STATES
-        or state.cook.state in _PREHEAT_STATES
-    ):
-        _LOGGER.info("skip-preheat switch flipped during preheat — re-issuing cook")
-        try:
-            await coordinator.async_skip_preheat()
-        except Exception as err:  # noqa: BLE001
-            _LOGGER.warning("skip-preheat trigger failed: %s", err)
+    if coordinator.data is not None and is_preheating(coordinator.data):
+        await coordinator.async_skip_preheat()
 
 
 # ---------------------------------------------------------------------------
@@ -115,8 +92,8 @@ SWITCHES: tuple[NinjaSwitchDescription, ...] = (
         translation_key="probe0_enabled",
         icon="mdi:thermometer-probe",
         entity_category=EntityCategory.CONFIG,
-        get_fn=lambda c: c.cook_setting_probe0_enabled,
-        set_fn=lambda c, v: setattr(c, "cook_setting_probe0_enabled", v),
+        get_fn=lambda c: c.live_or_staged_probe_enabled(0),
+        post_set_fn=lambda c, v: c.async_set_probe(0, enabled=v),
         available_fn=lambda c: (
             (m := c.capabilities.get_mode(c.live_or_staged_mode)) is not None
             and m.supports_probe
@@ -127,8 +104,8 @@ SWITCHES: tuple[NinjaSwitchDescription, ...] = (
         translation_key="probe1_enabled",
         icon="mdi:thermometer-probe",
         entity_category=EntityCategory.CONFIG,
-        get_fn=lambda c: c.cook_setting_probe1_enabled,
-        set_fn=lambda c, v: setattr(c, "cook_setting_probe1_enabled", v),
+        get_fn=lambda c: c.live_or_staged_probe_enabled(1),
+        post_set_fn=lambda c, v: c.async_set_probe(1, enabled=v),
         available_fn=lambda c: (
             c.capabilities.has_two_probes
             and (m := c.capabilities.get_mode(c.live_or_staged_mode)) is not None
@@ -144,10 +121,10 @@ SWITCHES: tuple[NinjaSwitchDescription, ...] = (
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
+    entry: NinjaWoodfireConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    coordinator: NinjaWoodfireCoordinator = hass.data[DOMAIN][entry.entry_id]
+    coordinator = entry.runtime_data
     async_add_entities(NinjaSwitch(coordinator, desc) for desc in SWITCHES)
 
 
@@ -174,13 +151,15 @@ class NinjaSwitch(NinjaWoodfireEntity, SwitchEntity):
         return super().available and self.entity_description.available_fn(self.coordinator)
 
     async def async_turn_on(self, **kwargs: Any) -> None:
-        self.entity_description.set_fn(self.coordinator, True)
-        self.async_write_ha_state()
-        if self.entity_description.post_set_fn:
-            await self.entity_description.post_set_fn(self.coordinator, True)
+        await self._set(True)
 
     async def async_turn_off(self, **kwargs: Any) -> None:
-        self.entity_description.set_fn(self.coordinator, False)
-        self.async_write_ha_state()
-        if self.entity_description.post_set_fn:
-            await self.entity_description.post_set_fn(self.coordinator, False)
+        await self._set(False)
+
+    async def _set(self, value: bool) -> None:
+        desc = self.entity_description
+        if desc.set_fn:
+            desc.set_fn(self.coordinator, value)
+            self.async_write_ha_state()
+        if desc.post_set_fn:
+            await desc.post_set_fn(self.coordinator, value)

@@ -6,8 +6,7 @@ with sensible defaults.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Any
+from dataclasses import dataclass
 
 
 @dataclass(frozen=True)
@@ -171,3 +170,16 @@ def for_oem_model(oem_model: str | None) -> GrillCapabilities:
     if oem_model and oem_model.startswith("OG9"):
         return WOODFIRE_PRO_XL
     return GENERIC
+
+
+def grill_level(setpoint: int | None) -> int | None:
+    """Map the firmware's grill-mode °C target to the heat level (1-3)."""
+    if setpoint is None:
+        return None
+    if 1 <= setpoint <= 3:
+        return setpoint
+    if setpoint < 175:
+        return 1
+    if setpoint < 215:
+        return 2
+    return 3

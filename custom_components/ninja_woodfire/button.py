@@ -5,12 +5,10 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
 from homeassistant.components.button import ButtonEntity, ButtonEntityDescription
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import DOMAIN
-from .coordinator import NinjaWoodfireCoordinator
+from .coordinator import NinjaWoodfireConfigEntry, NinjaWoodfireCoordinator
 from .entity import NinjaWoodfireEntity
 
 
@@ -43,10 +41,10 @@ BUTTONS: tuple[NinjaButtonDescription, ...] = (
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
+    entry: NinjaWoodfireConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    coordinator: NinjaWoodfireCoordinator = hass.data[DOMAIN][entry.entry_id]
+    coordinator = entry.runtime_data
     async_add_entities(NinjaButton(coordinator, desc) for desc in BUTTONS)
 
 

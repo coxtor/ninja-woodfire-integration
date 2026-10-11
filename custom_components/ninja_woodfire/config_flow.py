@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 from typing import Any
 
 import voluptuous as vol
@@ -139,4 +140,47 @@ class NinjaWoodfireConfigFlow(ConfigFlow, domain=DOMAIN):
         return self.async_show_form(
             step_id="pick_device",
             data_schema=vol.Schema({vol.Required(CONF_DSN): vol.In(choices)}),
+        )
+
+    async def async_step_reauth(
+        self, entry_data: Mapping[str, Any]
+    ) -> ConfigFlowResult:
+        return await self.async_step_reauth_confirm()
+
+    async def async_step_reauth_confirm(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        entry = self._get_reauth_entry()
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            data = {**entry.data, CONF_PASSWORD: user_input[CONF_PASSWORD]}
+            client = AylaCloudClient(
+                email=data[CONF_EMAIL],
+                password=data[CONF_PASSWORD],
+                region=make_region(
+                    data.get(CONF_REGION, DEFAULT_REGION),
+                    auth0_audience=data.get(CONF_AUTH0_AUDIENCE),
+                    auth0_client_id=data.get(CONF_AUTH0_CLIENT_ID),
+                    ayla_app_id=data.get(CONF_AYLA_APP_ID),
+                    ayla_app_secret=data.get(CONF_AYLA_APP_SECRET),
+                ),
+                session=async_get_clientsession(self.hass),
+            )
+            try:
+                await client.login()
+            except AuthError:
+                errors["base"] = "invalid_auth"
+            except TransportError as err:
+                _LOGGER.warning("transport error: %s", err)
+                errors["base"] = "cannot_connect"
+            except Exception:  # noqa: BLE001
+                _LOGGER.exception("unexpected during reauth")
+                errors["base"] = "unknown"
+            else:
+                return self.async_update_reload_and_abort(entry, data=data)
+        return self.async_show_form(
+            step_id="reauth_confirm",
+            data_schema=vol.Schema({vol.Required(CONF_PASSWORD): str}),
+            description_placeholders={"email": entry.data[CONF_EMAIL]},
+            errors=errors,
         )

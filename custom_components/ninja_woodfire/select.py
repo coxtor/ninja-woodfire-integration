@@ -2,22 +2,20 @@
 from __future__ import annotations
 
 from homeassistant.components.select import SelectEntity
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import DOMAIN
-from .coordinator import NinjaWoodfireCoordinator
+from .coordinator import NinjaWoodfireConfigEntry, NinjaWoodfireCoordinator
 from .entity import NinjaWoodfireEntity
 
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
+    entry: NinjaWoodfireConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    coordinator: NinjaWoodfireCoordinator = hass.data[DOMAIN][entry.entry_id]
+    coordinator = entry.runtime_data
     async_add_entities([CookModeSelect(coordinator)])
 
 

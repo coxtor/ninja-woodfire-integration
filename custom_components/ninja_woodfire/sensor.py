@@ -14,15 +14,17 @@ from homeassistant.components.sensor import (
     SensorStateClass,
 )
 from homeassistant.helpers.entity import EntityCategory
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import PERCENTAGE, UnitOfTemperature
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
+from ._lib.capabilities import grill_level
+from ._lib.const import GRILL_HEAT_LEVELS
 from ._lib.models import CombinedState
 
-from .const import DOMAIN
-from .coordinator import NinjaWoodfireCoordinator
+from .const import COOKING_STATES, PAUSED_STATES, PREHEAT_STATES, REST_STATES
+
+from .coordinator import NinjaWoodfireConfigEntry, NinjaWoodfireCoordinator
 from .entity import NinjaWoodfireEntity
 
 
@@ -34,52 +36,25 @@ class NinjaSensorDescription(SensorEntityDescription):
     attrs_fn: Callable[[CombinedState], dict[str, Any]] | None = None
 
 
-_GRILL_LEVEL_LABELS = {1: "Lo", 2: "Med", 3: "Hi"}
-
-
-def _setpoint_display(state: CombinedState, level_hint: int | None = None) -> str | int | None:
-    """User-facing setpoint, formatted by mode.
-
-    For non-grill modes the firmware reports the °C target — pass it
-    through as an int. For grill mode the firmware reports an internal
-    °C target that doesn't match the on-device label ("Lo/Med/Hi"). The
-    integration knows which heat-level the user picked (`cook_setting_temp`
-    in the coordinator); we pass that as `level_hint` and use it as the
-    source of truth, falling back to a coarse °C bucket if no hint is
-    available (e.g. cook started outside HA via the appliance buttons).
-    """
+def _setpoint_display(state: CombinedState, level: int | None = None) -> str | int | None:
+    """User-facing setpoint: °C, or Lo/Med/Hi in grill mode."""
     sp = state.grill.setpoint
     if sp is None:
         return None
     if state.grill.mode != "grill":
         return sp
-    if level_hint in _GRILL_LEVEL_LABELS:
-        return _GRILL_LEVEL_LABELS[level_hint]
-    # Fallback bucketing only when we have no local cook-setting record:
-    # compress the firmware's °C target into a level label. Thresholds
-    # are coarse — the canonical mapping lives on the appliance.
-    if sp < 175:
-        return "Lo"
-    if sp < 215:
-        return "Med"
-    return "Hi"
+    return GRILL_HEAT_LEVELS.get(level if level in GRILL_HEAT_LEVELS else grill_level(sp))
 
 
 def _cook_phase(state: CombinedState) -> str:
-    """Which sub-phase of a cook the grill is in.
-
-    Returns one of preheat | cooking | rest | none. The grill firmware
-    reports this via either grill.state or cook.state — we trust grill
-    state first since it's the more authoritative source for the
-    "front of house" view.
-    """
+    """Sub-phase of the cook: preheat | cooking | rest | none."""
     g = state.grill.state
     c = state.cook.state
-    if g == "preheat" or c == "preheat":
+    if g in PREHEAT_STATES or c in PREHEAT_STATES:
         return "preheat"
-    if g in ("rest", "resting") or c in ("rest", "resting"):
+    if g in REST_STATES or c in REST_STATES:
         return "rest"
-    if g in ("cooking", "cook") or c in ("cooking", "cook", "heat"):
+    if g in COOKING_STATES | PAUSED_STATES or c in COOKING_STATES | PAUSED_STATES:
         return "cooking"
     return "none"
 
@@ -395,10 +370,10 @@ DIAGNOSTICS: tuple[NinjaDiagnosticDescription, ...] = (
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
+    entry: NinjaWoodfireConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    coordinator: NinjaWoodfireCoordinator = hass.data[DOMAIN][entry.entry_id]
+    coordinator = entry.runtime_data
     entities: list[SensorEntity] = [NinjaSensor(coordinator, desc) for desc in SENSORS]
     entities.extend(NinjaDiagnosticSensor(coordinator, desc) for desc in DIAGNOSTICS)
     async_add_entities(entities)
@@ -420,16 +395,9 @@ class NinjaSensor(NinjaWoodfireEntity, SensorEntity):
     def native_value(self) -> Any:
         if self.coordinator.data is None:
             return None
-        # Setpoint needs the coordinator's local cook-setting state to
-        # render Lo/Med/Hi correctly in grill mode (firmware-reported °C
-        # alone is ambiguous). Pass it through as a hint.
         if self.entity_description.key == "setpoint":
-            level_hint = (
-                self.coordinator.cook_setting_temp
-                if self.coordinator.cook_setting_mode == "grill"
-                else None
-            )
-            return _setpoint_display(self.coordinator.data, level_hint=level_hint)
+            c = self.coordinator
+            return _setpoint_display(c.data, c.live_or_staged_temp if c.is_cook_active else None)
         return self.entity_description.value_fn(self.coordinator.data)
 
     @property

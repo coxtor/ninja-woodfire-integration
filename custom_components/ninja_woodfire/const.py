@@ -3,6 +3,14 @@ from __future__ import annotations
 
 from datetime import timedelta
 
+from ._lib.const import (  # noqa: F401
+    ACTIVE_STATES,
+    COOKING_STATES,
+    PAUSED_STATES,
+    PREHEAT_STATES,
+    REST_STATES,
+)
+
 DOMAIN = "ninja_woodfire"
 
 CONF_REGION = "region"
@@ -15,17 +23,10 @@ CONF_AYLA_APP_ID = "ayla_app_id"
 CONF_AYLA_APP_SECRET = "ayla_app_secret"
 
 # Adaptive polling cadence — fast while cooking, relaxed while idle.
-SCAN_INTERVAL_ACTIVE = timedelta(seconds=1)        # while cooking / preheat / rest (matches app's ~750ms)
-SCAN_INTERVAL_IDLE = timedelta(seconds=10)         # while idle
-DEFAULT_SCAN_INTERVAL = SCAN_INTERVAL_IDLE         # initial; coordinator adapts
-MIN_SCAN_INTERVAL = timedelta(seconds=1)
+SCAN_INTERVAL_ACTIVE = timedelta(seconds=3)
+SCAN_INTERVAL_IDLE = timedelta(seconds=10)
+DEFAULT_SCAN_INTERVAL = SCAN_INTERVAL_IDLE
 DEFAULT_REGION = "EU"
-
-# Cook states that should trigger fast polling.
-ACTIVE_STATES = frozenset(
-    {"preheat", "cooking", "cook", "rest", "resting", "flip", "get food",
-     "get_food", "lid open", "lid_open"}
-)
 
 # Cook-lifecycle events fired on the HA event bus. See coordinator
 # `_emit_lifecycle_events`. Automations subscribe via `event_type`.

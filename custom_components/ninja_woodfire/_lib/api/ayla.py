@@ -3,8 +3,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import json
 import time
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 import aiohttp
@@ -18,12 +20,13 @@ from ..const import (
     PROP_GRILL_STATE,
     PROP_PROBE_STATE,
     PROP_SET_COOK,
-    PROP_SET_POWER,
     make_region,
 )
 from ..models import CombinedState, CookState, GrillState, ProbeState
 
 _LOGGER = logging.getLogger(__name__)
+
+_TIMEOUT = aiohttp.ClientTimeout(total=20)
 
 
 class NinjaCloudError(Exception):
@@ -81,8 +84,11 @@ class AylaCloudClient:
     async def login(self) -> None:
         """Run the full token-exchange flow."""
         async with self._lock:
-            await self._auth0_password_grant()
-            await self._ayla_token_sign_in()
+            await self._login()
+
+    async def _login(self) -> None:
+        await self._auth0_password_grant()
+        await self._ayla_token_sign_in()
 
     async def _auth0_password_grant(self) -> None:
         url = f"{self._region.auth0_base}/oauth/token"
@@ -95,15 +101,14 @@ class AylaCloudClient:
             "client_id": self._region.auth0_client_id,
             "realm": "Username-Password-Authentication",
         }
-        async with self._client().post(url, json=body) as r:
-            if r.status == 401 or r.status == 403:
-                raise AuthError(f"Auth0 rejected credentials: {await r.text()}")
-            if r.status != 200:
-                raise TransportError(f"Auth0 {r.status}: {await r.text()}")
-            data = await r.json()
+        status, data = await self._send("POST", url, json=body)
+        if status in (401, 403):
+            raise AuthError(f"Auth0 rejected credentials: {data}")
+        if status != 200 or not isinstance(data, dict):
+            raise TransportError(f"Auth0 {status}: {data}")
         self._auth0_id_token = data.get("id_token")
         if not self._auth0_id_token:
-            raise AuthError(f"Auth0 returned no id_token: {data}")
+            raise TransportError("Auth0 returned no id_token")
 
     async def _ayla_token_sign_in(self) -> None:
         url = f"{self._region.ayla_user_base}/api/v1/token_sign_in"
@@ -112,86 +117,92 @@ class AylaCloudClient:
             "app_id": self._region.ayla_app_id,
             "app_secret": self._region.ayla_app_secret,
         }
-        async with self._client().post(url, json=body) as r:
-            if r.status != 200:
-                raise AuthError(f"Ayla token_sign_in {r.status}: {await r.text()}")
-            data = await r.json()
-        self._ayla = AylaSession(
-            access_token=data.get("access_token", ""),
-            refresh_token=data.get("refresh_token", ""),
-            expires_at=time.time() + float(data.get("expires_in", 0)) - 60,
-        )
+        status, data = await self._send("POST", url, json=body)
+        if status in (401, 403):
+            raise AuthError(f"Ayla token_sign_in {status}: {data}")
+        if status != 200 or not isinstance(data, dict):
+            raise TransportError(f"Ayla token_sign_in {status}: {data}")
+        self._store_session(data)
 
     async def _refresh(self) -> None:
-        if not self._ayla:
-            await self.login()
-            return
         url = f"{self._region.ayla_user_base}/users/refresh_token.json"
         body = {"user": {"refresh_token": self._ayla.refresh_token}}
-        async with self._client().post(url, json=body) as r:
-            if r.status != 200:
-                _LOGGER.info("token refresh failed (%s) — re-authenticating", r.status)
-                await self.login()
-                return
-            data = await r.json()
+        status, data = await self._send("POST", url, json=body)
+        if status != 200 or not isinstance(data, dict):
+            _LOGGER.info("token refresh failed (%s) — re-authenticating", status)
+            await self._login()
+            return
+        self._store_session(data)
+
+    def _store_session(self, data: dict[str, Any]) -> None:
         self._ayla = AylaSession(
             access_token=data.get("access_token", ""),
-            refresh_token=data.get("refresh_token", self._ayla.refresh_token),
+            refresh_token=data.get("refresh_token")
+            or (self._ayla.refresh_token if self._ayla else ""),
             expires_at=time.time() + float(data.get("expires_in", 0)) - 60,
         )
 
     async def _ensure_session(self) -> str:
         async with self._lock:
             if self._ayla is None:
-                await self._auth0_password_grant()
-                await self._ayla_token_sign_in()
+                await self._login()
             elif self._ayla.expires_at <= time.time():
                 await self._refresh()
             assert self._ayla is not None
             return self._ayla.access_token
 
+    # ------------------------------------------------------------------ http
+
+    async def _send(self, method: str, url: str, **kwargs: Any) -> tuple[int, Any]:
+        try:
+            async with self._client().request(
+                method, url, timeout=_TIMEOUT, **kwargs
+            ) as r:
+                if r.status in (200, 201):
+                    return r.status, await r.json(content_type=None)
+                return r.status, await r.text()
+        except (aiohttp.ClientError, TimeoutError, ValueError) as err:
+            raise TransportError(f"{method} {url}: {err!r}") from err
+
+    async def _api(self, method: str, url: str, **kwargs: Any) -> Any:
+        """Authenticated request; re-authenticates once on 401."""
+        for attempt in range(2):
+            token = await self._ensure_session()
+            status, data = await self._send(
+                method, url, headers=self._auth_headers(token), **kwargs
+            )
+            if status in (200, 201):
+                return data
+            if status == 401 and attempt == 0:
+                async with self._lock:
+                    if self._ayla is not None and self._ayla.access_token == token:
+                        self._ayla = None
+                continue
+            raise TransportError(f"{method} {url} {status}: {data}")
+
     # ------------------------------------------------------------------ data
 
     async def get_devices(self) -> list[dict[str, Any]]:
-        token = await self._ensure_session()
         url = f"{self._region.ayla_device_base}/apiv1/devices.json"
-        async with self._client().get(url, headers=self._auth_headers(token)) as r:
-            if r.status == 401:
-                await self._refresh()
-                token = await self._ensure_session()
-                async with self._client().get(url, headers=self._auth_headers(token)) as r2:
-                    return self._unwrap_list(await r2.json(), "device")
-            if r.status != 200:
-                raise TransportError(f"get_devices {r.status}: {await r.text()}")
-            return self._unwrap_list(await r.json(), "device")
+        return self._unwrap_list(await self._api("GET", url), "device")
 
     async def get_properties(
         self, dsn: str, names: list[str] | None = None
     ) -> list[dict[str, Any]]:
-        token = await self._ensure_session()
         url = f"{self._region.ayla_device_base}/apiv1/dsns/{dsn}/properties.json"
         params: list[tuple[str, str]] | None = (
             [("names[]", n) for n in names] if names else None
         )
-        async with self._client().get(
-            url, params=params, headers=self._auth_headers(token)
-        ) as r:
-            if r.status != 200:
-                raise TransportError(f"get_properties {r.status}: {await r.text()}")
-            return self._unwrap_list(await r.json(), "property")
+        return self._unwrap_list(await self._api("GET", url, params=params), "property")
 
     async def get_combined_state(self, dsn: str) -> CombinedState:
         """Read GET_GrillState + GET_CookState + GET_ProbeState in one round-trip."""
-        from datetime import datetime, timezone
-
         props = await self.get_properties(dsn, names=ALL_READ_PROPERTIES)
         state = CombinedState(dsn=dsn)
         latest_update: datetime | None = None
         for p in props:
             name = p.get("name")
             value = p.get("value")
-            # data_updated_at is the firmware's last-report timestamp.
-            # Used for staleness/plausibility checks downstream.
             updated_at_raw = p.get("data_updated_at")
             if updated_at_raw:
                 try:
@@ -213,18 +224,11 @@ class AylaCloudClient:
         self, dsn: str, name: str, value: Any
     ) -> dict[str, Any]:
         """Write a datapoint to a settable property (e.g. SET_Cook_Command)."""
-        token = await self._ensure_session()
         url = (
             f"{self._region.ayla_device_base}/apiv1/dsns/{dsn}"
             f"/properties/{name}/datapoints.json"
         )
-        body = {"datapoint": {"value": value}}
-        async with self._client().post(
-            url, json=body, headers=self._auth_headers(token)
-        ) as r:
-            if r.status not in (200, 201):
-                raise TransportError(f"set datapoint {r.status}: {await r.text()}")
-            return await r.json()
+        return await self._api("POST", url, json={"datapoint": {"value": value}})
 
     # ---------------------------------------------------------- cook commands
 
@@ -290,13 +294,11 @@ class AylaCloudClient:
         if probe_1 is not None:
             payload["probe1"] = probe_1
 
-        import json as _json
-        value = _json.dumps(payload, separators=(",", ":"))
+        value = json.dumps(payload, separators=(",", ":"))
         return await self.set_property_datapoint(dsn, PROP_SET_COOK, value)
 
     async def stop_cook(self, dsn: str) -> dict[str, Any]:
         """Stop the currently running cook."""
-        import json as _json
         stop_payload = {
             "id": 1000,
             "mode": "grill",
@@ -305,43 +307,13 @@ class AylaCloudClient:
             "smoke": 0,
             "skip preheat": 0,
         }
-        value = _json.dumps(stop_payload, separators=(",", ":"))
+        value = json.dumps(stop_payload, separators=(",", ":"))
         return await self.set_property_datapoint(dsn, PROP_SET_COOK, value)
 
     async def set_grill_name(self, dsn: str, new_name: str) -> dict[str, Any]:
         """Rename the grill in the user's account."""
-        token = await self._ensure_session()
         url = f"{self._region.ayla_device_base}/apiv1/dsns/{dsn}.json"
-        body = {"device": {"product_name": new_name}}
-        async with self._client().put(
-            url, json=body, headers=self._auth_headers(token)
-        ) as r:
-            if r.status not in (200, 201):
-                raise TransportError(f"set_grill_name {r.status}: {await r.text()}")
-            return await r.json()
-
-    async def skip_preheat(
-        self,
-        dsn: str,
-        *,
-        mode: str,
-        seconds: int,
-        temp: int,
-        smoke: bool = False,
-        device_key: int | None = None,
-    ) -> dict[str, Any]:
-        """Skip the preheat phase of an active cook by re-issuing the
-        same cook params with skip-preheat enabled.
-        """
-        return await self.start_cook(
-            dsn,
-            mode=mode,
-            seconds=seconds,
-            temp=temp,
-            smoke=smoke,
-            skip_preheat=True,
-            device_key=device_key,
-        )
+        return await self._api("PUT", url, json={"device": {"product_name": new_name}})
 
     # ------------------------------------------------------------------ helpers
 

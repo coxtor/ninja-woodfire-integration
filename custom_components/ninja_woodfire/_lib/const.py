@@ -108,6 +108,13 @@ COOK_MODES = (
 # Heat levels for grill mode (other modes use °C).
 GRILL_HEAT_LEVELS = {1: "Lo", 2: "Med", 3: "Hi"}
 
+# Cook phases as reported in GET_GrillState.state / GET_CookState.state.
+PREHEAT_STATES = frozenset({"preheat", "preheating", "start", "ignition"})
+COOKING_STATES = frozenset({"cooking", "cook", "heat"})
+REST_STATES = frozenset({"rest", "resting"})
+PAUSED_STATES = frozenset({"flip", "get food", "get_food", "lid open", "lid_open"})
+ACTIVE_STATES = PREHEAT_STATES | COOKING_STATES | REST_STATES | PAUSED_STATES
+
 PROBE_MODE_MANUAL = "manual"
 PROBE_MODE_PRESET = "preset"
 PROBE_MODES = (PROBE_MODE_MANUAL, PROBE_MODE_PRESET)

@@ -12,20 +12,34 @@ docs/API.md § 3.1 (state schemas).
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import dataclass, field
 from typing import Any
+
+from .const import ACTIVE_STATES
 
 
 def _parse_value(raw: Any) -> dict[str, Any]:
     """Ayla wraps the JSON state in a string. Tolerate both string + dict."""
-    if isinstance(raw, dict):
-        return raw
     if isinstance(raw, str):
         try:
-            return json.loads(raw)
+            raw = json.loads(raw)
         except json.JSONDecodeError:
             return {}
-    return {}
+    return raw if isinstance(raw, dict) else {}
+
+
+def _float(value: Any, default: float | None = 0.0) -> float | None:
+    try:
+        f = float(value)
+    except (TypeError, ValueError):
+        return default
+    return f if math.isfinite(f) else default
+
+
+def _int(value: Any, default: int | None = None) -> int | None:
+    f = _float(value, None)
+    return default if f is None else int(f)
 
 
 # ---------------------------------------------------------------- temps
@@ -92,26 +106,26 @@ class GrillState:
             message=str(d.get("message", "")),
             event_mask=str(d.get("eventmask", "")),
             lid_open=bool(io.get("lid open", 0)),
-            sim=int(d.get("sim", 0)),
+            sim=_int(d.get("sim"), 0),
             temps=GrillTemps(
-                grill=float(temps_raw.get("grill", 0)),
-                air=float(temps_raw.get("air", 0)),
-                smoke=float(temps_raw.get("smoke", 0)),
-                probe0_a=float(temps_raw.get("probe0_a", 0)),
-                probe0_b=float(temps_raw.get("probe0_b", 0)),
-                probe1_a=float(temps_raw.get("probe1_a", 0)),
-                probe1_b=float(temps_raw.get("probe1_b", 0)),
-                main=float(temps_raw.get("main", 0)),
-                ui=float(temps_raw.get("ui", 0)),
+                grill=_float(temps_raw.get("grill", 0)),
+                air=_float(temps_raw.get("air", 0)),
+                smoke=_float(temps_raw.get("smoke", 0)),
+                probe0_a=_float(temps_raw.get("probe0_a", 0)),
+                probe0_b=_float(temps_raw.get("probe0_b", 0)),
+                probe1_a=_float(temps_raw.get("probe1_a", 0)),
+                probe1_b=_float(temps_raw.get("probe1_b", 0)),
+                main=_float(temps_raw.get("main", 0)),
+                ui=_float(temps_raw.get("ui", 0)),
             ),
             mode=d.get("mode") if d.get("mode") else None,
-            setpoint=int(d["setpoint"]) if "setpoint" in d else None,
-            seconds_set=int(d["seconds set"]) if "seconds set" in d else None,
-            seconds_left=int(d["seconds left"]) if "seconds left" in d else None,
-            end_time_utc=int(d["endtimeutc"]) if "endtimeutc" in d else None,
+            setpoint=_int(d.get("setpoint")),
+            seconds_set=_int(d.get("seconds set")),
+            seconds_left=_int(d.get("seconds left")),
+            end_time_utc=_int(d.get("endtimeutc")),
             smoke=bool(d.get("smoke", 0)),
-            error=int(d.get("error", 0)),
-            probes_active=int(d.get("probes active", 0)),
+            error=_int(d.get("error"), 0),
+            probes_active=_int(d.get("probes active"), 0),
             raw=d,
         )
 
@@ -143,7 +157,7 @@ class CookState:
             progress = None
         return cls(
             state=state_name,
-            progress=int(progress) if progress is not None else None,
+            progress=_int(progress),
             raw=d,
         )
 
@@ -178,8 +192,8 @@ class ProbeMode:
 
         return cls(
             mode=str(d.get("mode", "none")) if d else "none",
-            setpoint=int(d["setpoint"]) if d and "setpoint" in d else None,
-            preset_index=int(d["preset_index"]) if d and "preset_index" in d else None,
+            setpoint=_int(d.get("setpoint")) if d else None,
+            preset_index=_int(d.get("preset_index")) if d else None,
             protein=_parse_int_or_str(d.get("protein")) if d else None,
             cut=_parse_int_or_str(d.get("cut")) if d else None,
             doneness=_parse_int_or_str(d.get("doneness")) if d else None,
@@ -210,8 +224,8 @@ class ProbeInfo:
             name=str(d.get("name", "")),
             plugged_in=bool(d.get("plugged in", 0)),
             active=bool(d.get("active", 0)),
-            temp=float(d.get("temp", 0)),
-            progress=int(d.get("progress", 0)),
+            temp=_float(d.get("temp")),
+            progress=_int(d.get("progress"), 0),
             target=ProbeMode.from_dict(mode_obj if isinstance(mode_obj, dict) else {}),
             state=state,
         )
@@ -263,11 +277,6 @@ class CombinedState:
         "air crisp", "bake", "roast", "reheat", "dehydrate",
     })
 
-    _ACTIVE_PHASES = frozenset({
-        "preheat", "preheating", "heat",
-        "cooking", "cook", "rest", "resting",
-    })
-
     def temp_is_plausible(self, value: float, name: str = "grill") -> bool:
         """Whether a temperature reading should be shown.
 
@@ -287,7 +296,7 @@ class CombinedState:
         if self.grill.state == "idle" and value > 50:
             return False
         # Active cook: gate sensors by which chamber is in play.
-        if self.grill.state in self._ACTIVE_PHASES:
+        if self.grill.state in ACTIVE_STATES:
             mode = self.grill.mode
             if name == "smoke" and not self.grill.smoke:
                 return False

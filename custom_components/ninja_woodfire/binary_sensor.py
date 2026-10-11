@@ -3,21 +3,18 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any
 
 from homeassistant.components.binary_sensor import (
     BinarySensorDeviceClass,
     BinarySensorEntity,
     BinarySensorEntityDescription,
 )
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from ._lib.models import CombinedState
 
-from .const import DOMAIN
-from .coordinator import NinjaWoodfireCoordinator
+from .coordinator import NinjaWoodfireConfigEntry, NinjaWoodfireCoordinator
 from .entity import NinjaWoodfireEntity
 
 
@@ -60,10 +57,10 @@ BINARY_SENSORS: tuple[NinjaBinarySensorDescription, ...] = (
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
+    entry: NinjaWoodfireConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    coordinator: NinjaWoodfireCoordinator = hass.data[DOMAIN][entry.entry_id]
+    coordinator = entry.runtime_data
     async_add_entities(NinjaBinarySensor(coordinator, desc) for desc in BINARY_SENSORS)
 
 
