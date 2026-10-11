@@ -88,3 +88,65 @@ async def test_ayla_signs_in_with_the_shared_token(hass, aioclient_mock):
     assert _grants(aioclient_mock) == 1
     sign_in = next(data for _, url, data, _ in aioclient_mock.mock_calls if str(url) == SIGN_IN)
     assert sign_in["token"] == token
+
+
+def _sign_in_replies(aioclient_mock, statuses):
+    from pytest_homeassistant_custom_component.test_util.aiohttp import AiohttpClientMockResponse
+
+    statuses, tokens = list(statuses), []
+
+    async def reply(method, url, data):
+        tokens.append(data["token"])
+        status = statuses.pop(0)
+        body = {"access_token": "a", "refresh_token": "r", "expires_in": 3600}
+        return AiohttpClientMockResponse(method, url, status=status, json=body)
+
+    aioclient_mock.post(SIGN_IN, side_effect=reply)
+    return tokens
+
+
+def _distinct_grants(aioclient_mock):
+    from pytest_homeassistant_custom_component.test_util.aiohttp import AiohttpClientMockResponse
+
+    count = iter(range(100))
+
+    async def reply(method, url, data):
+        return AiohttpClientMockResponse(method, url, json={"id_token": jwt(f"auth0|u{next(count)}")})
+
+    aioclient_mock.post(AUTH0, side_effect=reply)
+
+
+@pytest.mark.parametrize("status", [401, 403])
+async def test_rejected_shared_token_is_refreshed_once(hass, aioclient_mock, status):
+    _distinct_grants(aioclient_mock)
+    tokens = _sign_in_replies(aioclient_mock, [status, 200])
+    auth, http = _session(), async_get_clientsession(hass)
+    stale = await auth.id_token(http)
+    await AylaCloudClient("a@b.c", "pw", session=http, auth=auth).login()
+    assert _grants(aioclient_mock) == 2
+    assert tokens[0] == stale
+    assert tokens[1] == await auth.id_token(http) != stale
+
+
+async def test_rejected_refreshed_token_is_an_auth_error(hass, aioclient_mock):
+    _distinct_grants(aioclient_mock)
+    tokens = _sign_in_replies(aioclient_mock, [401, 403])
+    client = AylaCloudClient("a@b.c", "pw", session=async_get_clientsession(hass), auth=_session())
+    with pytest.raises(AuthError):
+        await client.login()
+    assert len(tokens) == 2
+    assert _grants(aioclient_mock) == 2
+
+
+async def test_token_without_expiry_lasts_an_hour(hass, aioclient_mock, freezer):
+    token = jwt().rsplit(".", 2)
+    token[1] = "eyJzdWIiOiAiYXV0aDB8dXNlcjEifQ"  # {"sub": "auth0|user1"}
+    aioclient_mock.post(AUTH0, json={"id_token": ".".join(token)})
+    auth, http = _session(), async_get_clientsession(hass)
+    await auth.id_token(http)
+    freezer.tick(3000)
+    await auth.id_token(http)
+    assert _grants(aioclient_mock) == 1
+    freezer.tick(600)
+    await auth.id_token(http)
+    assert _grants(aioclient_mock) == 2

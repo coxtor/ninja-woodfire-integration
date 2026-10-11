@@ -13,6 +13,9 @@ from ..const import CloudRegion
 from .errors import AuthError, TransportError
 from .http import send
 
+# Assumed lifetime when neither the token nor the response states one.
+_DEFAULT_LIFETIME_S = 3600
+
 
 def _jwt_claims(token: str) -> dict[str, Any]:
     """Read a JWT's claims without verifying it (the API does that)."""
@@ -74,7 +77,7 @@ class Auth0Session:
         claims = _jwt_claims(token)
         exp = claims.get("exp")
         if not isinstance(exp, (int, float)):
-            exp = time.time() + float(data.get("expires_in") or 0)
+            exp = time.time() + float(data.get("expires_in") or _DEFAULT_LIFETIME_S)
         self._id_token = token
         self.user_id = str(claims.get("sub", "")).removeprefix("auth0|")
         self.expires_at = float(exp) - 60

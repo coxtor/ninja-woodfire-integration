@@ -467,3 +467,42 @@ async def test_stop_waits_for_nothing(hass, backend, sleep):
 def test_timestamp_without_zone_is_utc():
     state = state_from_device(DSN, {"updatedAt": "2026-08-19T18:39:58.666"})
     assert state.last_updated_at == datetime(2026, 8, 19, 18, 39, 58, 666000, tzinfo=timezone.utc)
+
+
+async def test_device_with_malformed_registry_is_skipped(hass, aioclient_mock):
+    aioclient_mock.post(AUTH0, json={"id_token": jwt("auth0|user1")})
+    aioclient_mock.get(HOUSEHOLDS, json={"households": ["hh1"]})
+    aioclient_mock.get(DEVICES, json={"items": [{"deviceId": "SND0", "registry": "?"}, aws_device()]})
+    assert (await _client(hass).find_device(DSN))["deviceId"] == "SND1"
+
+
+async def test_404_from_the_device_re_resolves_it_once(hass, backend):
+    backend.clear_requests()
+    backend.post(AUTH0, json={"id_token": jwt("auth0|user1")})
+    backend.get(HOUSEHOLDS, json={"households": ["hh1"]})
+    backend.get(DEVICES, json={"items": [aws_device()]})
+    _replies(backend, DEVICE, "patch", [404, {}])
+    client = _client(hass)
+    await client.stop_cook(DSN)
+    assert len(_calls(backend, DEVICE, "PATCH")) == 2
+    assert len(_calls(backend, DEVICES)) == 2
+    assert len(_calls(backend, HOUSEHOLDS)) == 2
+
+
+async def test_repeated_404_from_the_device_fails(hass, backend):
+    backend.clear_requests()
+    backend.post(AUTH0, json={"id_token": jwt("auth0|user1")})
+    backend.get(HOUSEHOLDS, json={"households": ["hh1"]})
+    backend.get(DEVICES, json={"items": [aws_device()]})
+    backend.patch(DEVICE, status=404, text="gone")
+    with pytest.raises(TransportError):
+        await _client(hass).stop_cook(DSN)
+    assert len(_calls(backend, DEVICE, "PATCH")) == 2
+
+
+async def test_404_from_the_device_list_re_resolves_the_household(hass, aioclient_mock):
+    aioclient_mock.post(AUTH0, json={"id_token": jwt("auth0|user1")})
+    aioclient_mock.get(HOUSEHOLDS, json={"households": ["hh1"]})
+    _replies(aioclient_mock, DEVICES, "get", [404, {"items": [aws_device()]}])
+    assert (await _client(hass).find_device(DSN))["deviceId"] == "SND1"
+    assert len(_calls(aioclient_mock, HOUSEHOLDS)) == 2

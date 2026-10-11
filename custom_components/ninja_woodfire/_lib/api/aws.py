@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from typing import Any
 
@@ -27,6 +28,10 @@ _START_ID = 1001
 _ACK_TIMEOUT_S = 20
 _ACK_POLL_S = 2
 _sleep = asyncio.sleep
+
+
+class _NotFound(TransportError):
+    """A household or device id the API no longer knows."""
 
 # AWS serves the Ayla payloads with every space stripped, from keys and
 # enum values alike. Reads are mapped back; commands use the spaced spelling.
@@ -129,7 +134,8 @@ class AwsCloudClient:
                 token = await self._auth.refresh(self._http, token)
                 continue
             # 403 means a bad API key or a foreign resource, not bad credentials.
-            raise TransportError(f"{method} {path} {status}: {data}")
+            error = _NotFound if status == 404 else TransportError
+            raise error(f"{method} {path} {status}: {data}")
 
     def _headers(self, token: str) -> dict[str, str]:
         now = datetime.now(tz=timezone.utc).isoformat(timespec="milliseconds")
@@ -158,21 +164,35 @@ class AwsCloudClient:
                 self._household = str(households[0])
         return self._household
 
-    async def find_device(self, dsn: str) -> dict[str, Any] | None:
-        """The grill's device record, matched by Ayla DSN or appliance serial."""
+    async def _resolving(self, request: Callable[[], Awaitable[Any]]) -> Any:
+        """Run `request`, resolving household and device ids afresh once on a 404."""
+        try:
+            return await request()
+        except _NotFound:
+            self._household = None
+            self._device_ids.clear()
+            return await request()
+
+    async def _list_devices(self) -> Any:
         household = await self._household_id()
         if household is None:
             return None
-        data = await self._api(
+        return await self._api(
             "GET",
             f"/devicesEndUserController/{household}/users/{await self._user_id()}",
             params={"includeRegistry": "true", "includeConnectivityStatus": "true"},
         )
+
+    async def find_device(self, dsn: str) -> dict[str, Any] | None:
+        """The grill's device record, matched by Ayla DSN or appliance serial."""
+        data = await self._resolving(self._list_devices)
         items = data.get("items") if isinstance(data, dict) else None
         for device in items if isinstance(items, list) else []:
             if not isinstance(device, dict):
                 continue
             registry = device.get("registry") or {}
+            if not isinstance(registry, dict):
+                continue
             ids = {
                 str(device.get("deviceId")),
                 str(registry.get("serialNumber")),
@@ -191,12 +211,15 @@ class AwsCloudClient:
         return state_from_device(dsn, device)
 
     async def _device_api(self, dsn: str, method: str, **kwargs: Any) -> Any:
-        if dsn not in self._device_ids:
-            await self.find_device(dsn)
-        if (device_id := self._device_ids.get(dsn)) is None:
-            raise TransportError(f"device {dsn} not found on the AWS backend")
-        path = f"/devicesEndUserController/{self._household}/devices/{device_id}"
-        return await self._api(method, path, **kwargs)
+        async def request() -> Any:
+            if dsn not in self._device_ids:
+                await self.find_device(dsn)
+            if (device_id := self._device_ids.get(dsn)) is None:
+                raise TransportError(f"device {dsn} not found on the AWS backend")
+            path = f"/devicesEndUserController/{self._household}/devices/{device_id}"
+            return await self._api(method, path, **kwargs)
+
+        return await self._resolving(request)
 
     async def _send_cook_command(self, dsn: str, command: dict[str, Any] | None) -> Any:
         body = {"shadow": {"properties": {"desired": {"Cook_Command": command}}}}

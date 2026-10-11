@@ -78,15 +78,21 @@ class AylaCloudClient:
             await self._login()
 
     async def _login(self) -> None:
+        """Sign in with the shared Auth0 token, renewing it once if Ayla rejects it."""
         url = f"{self._region.ayla_user_base}/api/v1/token_sign_in"
-        body = {
-            "token": await self._auth.id_token(self._client()),
-            "app_id": self._region.ayla_app_id,
-            "app_secret": self._region.ayla_app_secret,
-        }
-        status, data = await self._send("POST", url, json=body)
-        if status in (401, 403):
-            raise AuthError(f"Ayla token_sign_in {status}: {data}")
+        token = await self._auth.id_token(self._client())
+        for attempt in range(2):
+            body = {
+                "token": token,
+                "app_id": self._region.ayla_app_id,
+                "app_secret": self._region.ayla_app_secret,
+            }
+            status, data = await self._send("POST", url, json=body)
+            if status not in (401, 403):
+                break
+            if attempt:
+                raise AuthError(f"Ayla token_sign_in {status}: {data}")
+            token = await self._auth.refresh(self._client(), token)
         if status != 200 or not isinstance(data, dict):
             raise TransportError(f"Ayla token_sign_in {status}: {data}")
         self._store_session(data)
