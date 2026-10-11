@@ -44,13 +44,19 @@ def _int(value: Any, default: int | None = None) -> int | None:
 
 # ---------------------------------------------------------------- temps
 
+FAHRENHEIT_TEMP_FIELDS = frozenset({
+    "grill", "air", "smoke", "probe0_a", "probe0_b", "probe1_a", "probe1_b",
+})
+
+
 @dataclass
 class GrillTemps:
-    """Live temperature readings from the grill MCU.
+    """Live temperature readings from the grill MCU, normalised to °C.
 
-    grill/air/smoke are all in °C and reflect what the grill display shows.
-    probeN_a/probeN_b are dual-element raw probe readings (averaged into
-    the per-probe `temp` field).
+    The firmware sends grill/air/smoke/probeN_a/probeN_b in °F (unlike
+    `setpoint` and `ProbeInfo.temp`, which are already °C); `from_wire`
+    converts them. probeN_a/probeN_b are dual-element raw probe readings
+    (averaged into the per-probe `temp` field).
     main/ui are PCB analog reads, NOT temperatures despite the unit confusion
     you'd think — values like 6542.4 are ADC counts × 0.1.
     """
@@ -64,6 +70,18 @@ class GrillTemps:
     probe1_b: float = 0.0
     main: float = 0.0  # PCB ADC, not °C
     ui: float = 0.0    # PCB ADC, not °C
+
+    @classmethod
+    def from_wire(cls, raw: dict[str, Any]) -> "GrillTemps":
+        values = {}
+        for name in vars(cls()):
+            value = _float(raw.get(name), None)
+            if value is None:
+                value = 0.0
+            elif name in FAHRENHEIT_TEMP_FIELDS:
+                value = round((value - 32) * 5 / 9, 1)
+            values[name] = value
+        return cls(**values)
 
 
 # ---------------------------------------------------------------- grill state
@@ -107,17 +125,7 @@ class GrillState:
             event_mask=str(d.get("eventmask", "")),
             lid_open=bool(io.get("lid open", 0)),
             sim=_int(d.get("sim"), 0),
-            temps=GrillTemps(
-                grill=_float(temps_raw.get("grill", 0)),
-                air=_float(temps_raw.get("air", 0)),
-                smoke=_float(temps_raw.get("smoke", 0)),
-                probe0_a=_float(temps_raw.get("probe0_a", 0)),
-                probe0_b=_float(temps_raw.get("probe0_b", 0)),
-                probe1_a=_float(temps_raw.get("probe1_a", 0)),
-                probe1_b=_float(temps_raw.get("probe1_b", 0)),
-                main=_float(temps_raw.get("main", 0)),
-                ui=_float(temps_raw.get("ui", 0)),
-            ),
+            temps=GrillTemps.from_wire(temps_raw),
             mode=d.get("mode") if d.get("mode") else None,
             setpoint=_int(d.get("setpoint")),
             seconds_set=_int(d.get("seconds set")),
@@ -281,7 +289,7 @@ class CombinedState:
         """Whether a temperature reading should be shown.
 
         Args:
-            value: the raw °C reading.
+            value: the °C reading.
             name: which sensor — "grill", "air", "smoke". Drives
                   per-mode plausibility (e.g. smoke chamber only
                   reports meaningfully when smoke=on; air chamber
