@@ -2,7 +2,10 @@ import logging
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, patch
 
+import pytest
+
 from homeassistant import config_entries
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import entity_registry as er
 
 from custom_components.ninja_woodfire._lib.api.aws import state_from_device
@@ -171,3 +174,13 @@ async def test_failing_recheck_is_logged_once(hass, entry, freezer, caplog):
     assert aws.find_device.await_count == 2
     assert entry.runtime_data.last_update_success
     assert sum("down" in r.getMessage() for r in caplog.records) == 1
+
+
+async def test_refused_aws_start_is_a_home_assistant_error(hass, entry):
+    aws = _aws(aws_device())
+    aws.start_cook.side_effect = TransportError("grill is not connected to the AWS cloud")
+    await setup_integration(hass, entry, _ayla(), aws)
+    coordinator = entry.runtime_data
+    coordinator._burst_refresh = AsyncMock()
+    with pytest.raises(HomeAssistantError, match="not connected"):
+        await coordinator.async_start_cook()

@@ -1,9 +1,13 @@
 import json
+from datetime import datetime, timedelta, timezone
+from unittest.mock import AsyncMock
 
 import pytest
+from pytest_homeassistant_custom_component.test_util.aiohttp import AiohttpClientMockResponse
 
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
+from custom_components.ninja_woodfire._lib.api import aws as aws_module
 from custom_components.ninja_woodfire._lib.api.auth0 import Auth0Session
 from custom_components.ninja_woodfire._lib.api.aws import (
     AwsCloudClient,
@@ -35,11 +39,48 @@ def _calls(aioclient_mock, url, method=None):
     ]
 
 
+@pytest.fixture(autouse=True)
+def sleep(monkeypatch):
+    sleep = AsyncMock()
+    monkeypatch.setattr(aws_module, "_sleep", sleep)
+    return sleep
+
+
+def _shadow(cook_command=None, updated_at="2026-08-19T18:39:58.666Z"):
+    """The single-device record, as read back after a command."""
+    return {
+        "deviceId": "SND1",
+        "updatedAt": updated_at,
+        "shadow": {"properties": {"desired": {}, "reported": {"Cook_Command": cook_command}}},
+    }
+
+
+def _replies(aioclient_mock, url, method, replies):
+    """Serve `replies` in order (a dict is JSON, an int a bare status); the last repeats."""
+    replies = list(replies)
+
+    async def reply(m, u, data):
+        r = replies.pop(0) if len(replies) > 1 else replies[0]
+        if isinstance(r, int):
+            return AiohttpClientMockResponse(m, u, status=r, text="nope")
+        return AiohttpClientMockResponse(m, u, json=r)
+
+    getattr(aioclient_mock, method)(url, side_effect=reply)
+
+
+def _patches(aioclient_mock):
+    return [
+        c[2]["shadow"]["properties"]["desired"]["Cook_Command"]
+        for c in _calls(aioclient_mock, DEVICE, "PATCH")
+    ]
+
+
 @pytest.fixture
 def backend(aioclient_mock):
     aioclient_mock.post(AUTH0, json={"id_token": jwt("auth0|user1")})
     aioclient_mock.get(HOUSEHOLDS, json={"households": ["hh1"]})
     aioclient_mock.get(DEVICES, json={"items": [aws_device()]})
+    _replies(aioclient_mock, DEVICE, "get", [_shadow({"id": 1000}), _shadow({"id": 1001})])
     aioclient_mock.patch(DEVICE, json={})
     return aioclient_mock
 
@@ -51,8 +92,7 @@ def _client(hass, region=None):
 
 async def _sent(hass, backend, call):
     await call(_client(hass))
-    (_, _, body, _), = _calls(backend, DEVICE, "PATCH")
-    return body["shadow"]["properties"]["desired"]["Cook_Command"]
+    return _patches(backend)[0]
 
 
 # ---------------------------------------------------------------- normalisation
@@ -153,7 +193,7 @@ def test_powered_off_with_lid_open():
 
 
 @pytest.mark.parametrize(("connected", "online", "status"), [
-    (True, True, "Online"), (False, False, "Offline"), (None, False, None),
+    (True, True, "Online"), (False, False, "Offline"), (None, True, None),
 ])
 def test_connectivity(connected, online, status):
     state = state_from_device(DSN, {"connectivityStatus": {"connected": connected}})
@@ -164,7 +204,8 @@ def test_connectivity(connected, online, status):
 def test_missing_telemetry():
     state = state_from_device(DSN, {})
     assert state.grill.state == "unknown"
-    assert state.online is False
+    assert state.online is True
+    assert state.connection_status is None
     assert state.last_updated_at is None
 
 
@@ -320,3 +361,109 @@ async def test_ayla_payload_is_unchanged(hass, aioclient_mock):
 
 async def _token():
     return "tok"
+
+
+# ---------------------------------------------------------------- start acknowledgement
+
+
+START = {"mode": "bake", "seconds": 600, "temp": 180}
+
+
+def _listing(aioclient_mock, connectivity):
+    device = aws_device()
+    device["connectivityStatus"] = connectivity
+    aioclient_mock.post(AUTH0, json={"id_token": jwt("auth0|user1")})
+    aioclient_mock.get(HOUSEHOLDS, json={"households": ["hh1"]})
+    aioclient_mock.get(DEVICES, json={"items": [device]})
+
+
+async def test_start_acknowledged_by_reported_command(hass, backend, sleep):
+    await _client(hass).start_cook(DSN, **START)
+    assert [p and p["id"] for p in _patches(backend)] == [1001, None]
+    assert len(_calls(backend, DEVICE, "GET")) == 2
+    sleep.assert_awaited_with(aws_module._ACK_POLL_S)
+
+
+async def test_start_acknowledged_by_a_later_report(hass, aioclient_mock):
+    _listing(aioclient_mock, {"connected": True})
+    later = (datetime.now(tz=timezone.utc) + timedelta(minutes=1)).isoformat()
+    _replies(aioclient_mock, DEVICE, "get", [_shadow({"id": 1000}), _shadow({"id": 1000}), _shadow({"id": 1000}, later)])
+    aioclient_mock.patch(DEVICE, json={})
+    await _client(hass).start_cook(DSN, **START)
+    assert [p and p["id"] for p in _patches(aioclient_mock)] == [1001, None]
+    assert len(_calls(aioclient_mock, DEVICE, "GET")) == 3
+
+
+async def test_unacknowledged_start_is_withdrawn(hass, aioclient_mock, sleep):
+    _listing(aioclient_mock, {"connected": True})
+    _replies(aioclient_mock, DEVICE, "get", [_shadow({"id": 1000})])
+    aioclient_mock.patch(DEVICE, json={})
+    with pytest.raises(TransportError, match="did not acknowledge the command; it was withdrawn"):
+        await _client(hass).start_cook(DSN, **START)
+    assert [p["id"] for p in _patches(aioclient_mock)] == [1001, 1000]
+    polls = aws_module._ACK_TIMEOUT_S // aws_module._ACK_POLL_S
+    assert len(_calls(aioclient_mock, DEVICE, "GET")) == 1 + polls
+    assert sleep.await_count == polls
+
+
+async def test_failed_withdrawal_is_reported(hass, aioclient_mock):
+    _listing(aioclient_mock, {"connected": True})
+    _replies(aioclient_mock, DEVICE, "get", [_shadow({"id": 1000})])
+    _replies(aioclient_mock, DEVICE, "patch", [{}, 500])
+    with pytest.raises(TransportError, match="withdrawing it failed"):
+        await _client(hass).start_cook(DSN, **START)
+    assert [p["id"] for p in _patches(aioclient_mock)] == [1001, 1000]
+
+
+async def test_failing_polls_count_as_unacknowledged(hass, aioclient_mock):
+    _listing(aioclient_mock, {"connected": True})
+    _replies(aioclient_mock, DEVICE, "get", [_shadow({"id": 1000}), 500])
+    aioclient_mock.patch(DEVICE, json={})
+    with pytest.raises(TransportError, match="withdrawn"):
+        await _client(hass).start_cook(DSN, **START)
+    assert [p["id"] for p in _patches(aioclient_mock)] == [1001, 1000]
+
+
+async def test_clearing_the_queued_command_may_fail(hass, aioclient_mock):
+    _listing(aioclient_mock, {"connected": True})
+    _replies(aioclient_mock, DEVICE, "get", [_shadow({"id": 1000}), _shadow({"id": 1001})])
+    _replies(aioclient_mock, DEVICE, "patch", [{}, 400])
+    await _client(hass).start_cook(DSN, **START)
+    assert [p and p["id"] for p in _patches(aioclient_mock)] == [1001, None]
+
+
+@pytest.mark.parametrize("connectivity", [{"connected": False}, {}, None])
+async def test_start_requires_a_connected_grill(hass, aioclient_mock, connectivity):
+    _listing(aioclient_mock, connectivity)
+    aioclient_mock.patch(DEVICE, json={})
+    with pytest.raises(TransportError, match="grill is not connected to the AWS cloud"):
+        await _client(hass).start_cook(DSN, **START)
+    assert _calls(aioclient_mock, DEVICE) == []
+
+
+async def test_start_checks_connectivity_fresh(hass, backend):
+    client = _client(hass)
+    await client.find_device(DSN)
+    await client.start_cook(DSN, **START)
+    assert len(_calls(backend, DEVICES)) == 2
+
+
+async def test_unreadable_shadow_sends_nothing(hass, aioclient_mock):
+    _listing(aioclient_mock, {"connected": True})
+    aioclient_mock.get(DEVICE, status=500, text="nope")
+    aioclient_mock.patch(DEVICE, json={})
+    with pytest.raises(TransportError):
+        await _client(hass).start_cook(DSN, **START)
+    assert _calls(aioclient_mock, DEVICE, "PATCH") == []
+
+
+async def test_stop_waits_for_nothing(hass, backend, sleep):
+    await _client(hass).stop_cook(DSN)
+    assert [p["id"] for p in _patches(backend)] == [1000]
+    assert _calls(backend, DEVICE, "GET") == []
+    sleep.assert_not_awaited()
+
+
+def test_timestamp_without_zone_is_utc():
+    state = state_from_device(DSN, {"updatedAt": "2026-08-19T18:39:58.666"})
+    assert state.last_updated_at == datetime(2026, 8, 19, 18, 39, 58, 666000, tzinfo=timezone.utc)

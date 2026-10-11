@@ -73,6 +73,11 @@ Grills migrated by the Ninja app are detected automatically and read and
 controlled over AWS; Ayla is still used for setup and renaming. The
 *Cloud backend* diagnostic sensor shows which one is in use.
 
+AWS queues commands for a grill that is not connected and delivers them
+when it reconnects. A cook is therefore only started on a connected grill,
+and a start the grill does not acknowledge within 20 seconds is withdrawn
+and reported as failed.
+
 ## Region
 
 EU and NA region defaults are bundled. Only EU is exercised by the

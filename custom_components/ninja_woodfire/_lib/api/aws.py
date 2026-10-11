@@ -5,6 +5,8 @@ keeps serving their last snapshot.
 """
 from __future__ import annotations
 
+import asyncio
+import logging
 from datetime import datetime, timezone
 from typing import Any
 
@@ -17,7 +19,14 @@ from .commands import cook_command, stop_command
 from .errors import TransportError
 from .http import send
 
+_LOGGER = logging.getLogger(__name__)
+
 _START_ID = 1001
+# A start is only trusted once the grill acknowledges it; an unacknowledged
+# one stays queued in the shadow and would fire when the grill next connects.
+_ACK_TIMEOUT_S = 20
+_ACK_POLL_S = 2
+_sleep = asyncio.sleep
 
 # AWS serves the Ayla payloads with every space stripped, from keys and
 # enum values alike. Reads are mapped back; commands use the spaced spelling.
@@ -53,15 +62,32 @@ def normalise(node: Any, key: str | None = None) -> Any:
 
 def _timestamp(raw: Any) -> datetime | None:
     try:
-        return datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+        ts = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
     except ValueError:
         return None
+    return ts if ts.tzinfo else ts.replace(tzinfo=timezone.utc)
+
+
+def _connected(device: dict[str, Any]) -> Any:
+    return (device.get("connectivityStatus") or {}).get("connected")
+
+
+def is_connected(device: dict[str, Any]) -> bool:
+    """Whether AWS explicitly reports the grill connected."""
+    return _connected(device) is True
+
+
+def _reported_command(device: Any) -> Any:
+    shadow = device.get("shadow") if isinstance(device, dict) else None
+    shadow = shadow.get("properties", shadow) if isinstance(shadow, dict) else None
+    reported = shadow.get("reported") if isinstance(shadow, dict) else None
+    return reported.get("Cook_Command") if isinstance(reported, dict) else None
 
 
 def state_from_device(dsn: str, device: dict[str, Any]) -> CombinedState:
     """Build the shared state model from one AWS device record."""
     telemetry = device.get("telemetry") or {}
-    connected = (device.get("connectivityStatus") or {}).get("connected")
+    connected = _connected(device)
 
     def blob(name: str) -> dict[str, Any]:
         return normalise(_parse_value(telemetry.get(name)))
@@ -71,7 +97,7 @@ def state_from_device(dsn: str, device: dict[str, Any]) -> CombinedState:
         grill=GrillState.from_property_value(blob("GrillState")),
         cook=CookState.from_property_value(blob("CookState")),
         probes=ProbeState.from_property_value(blob("ProbeState")),
-        online=bool(connected),
+        online=connected is not False,
         connection_status=None if connected is None else "Online" if connected else "Offline",
         last_updated_at=_timestamp(device.get("updatedAt")),
     )
@@ -164,14 +190,54 @@ class AwsCloudClient:
             raise TransportError(f"device {dsn} not found on the AWS backend")
         return state_from_device(dsn, device)
 
-    async def _send_cook_command(self, dsn: str, command: dict[str, Any]) -> Any:
+    async def _device_api(self, dsn: str, method: str, **kwargs: Any) -> Any:
         if dsn not in self._device_ids:
             await self.find_device(dsn)
         if (device_id := self._device_ids.get(dsn)) is None:
             raise TransportError(f"device {dsn} not found on the AWS backend")
         path = f"/devicesEndUserController/{self._household}/devices/{device_id}"
+        return await self._api(method, path, **kwargs)
+
+    async def _send_cook_command(self, dsn: str, command: dict[str, Any] | None) -> Any:
         body = {"shadow": {"properties": {"desired": {"Cook_Command": command}}}}
-        return await self._api("PATCH", path, json=body)
+        return await self._device_api(dsn, "PATCH", json=body)
+
+    async def _acknowledged(self, dsn: str, before: Any, sent_at: datetime) -> bool:
+        for _ in range(_ACK_TIMEOUT_S // _ACK_POLL_S):
+            await _sleep(_ACK_POLL_S)
+            try:
+                device = await self._device_api(dsn, "GET")
+            except TransportError as err:
+                _LOGGER.debug("reading back the cook command failed: %s", err)
+                continue
+            reported_at = _timestamp(device.get("updatedAt")) if isinstance(device, dict) else None
+            if _reported_command(device) != before or (reported_at and reported_at > sent_at):
+                return True
+        return False
+
+    async def _start(self, dsn: str, command: dict[str, Any]) -> Any:
+        """Send a start only to a connected grill and withdraw it unless acknowledged."""
+        device = await self.find_device(dsn)
+        if device is None:
+            raise TransportError(f"device {dsn} not found on the AWS backend")
+        if not is_connected(device):
+            raise TransportError("grill is not connected to the AWS cloud")
+        before = _reported_command(await self._device_api(dsn, "GET"))
+        sent_at = datetime.now(tz=timezone.utc)
+        result = await self._send_cook_command(dsn, command)
+        if not await self._acknowledged(dsn, before, sent_at):
+            try:
+                await self._send_cook_command(dsn, stop_command())
+            except TransportError as err:
+                raise TransportError(
+                    f"grill did not acknowledge the command and withdrawing it failed: {err}"
+                ) from err
+            raise TransportError("grill did not acknowledge the command; it was withdrawn")
+        try:
+            await self._send_cook_command(dsn, None)
+        except TransportError as err:
+            _LOGGER.debug("clearing the delivered cook command failed: %s", err)
+        return result
 
     async def start_cook(
         self,
@@ -196,7 +262,7 @@ class AwsCloudClient:
             probe_0=probe_0,
             probe_1=probe_1,
         )
-        return await self._send_cook_command(dsn, {"id": _START_ID, **payload})
+        return await self._start(dsn, {"id": _START_ID, **payload})
 
     async def stop_cook(self, dsn: str) -> Any:
         return await self._send_cook_command(dsn, stop_command())
