@@ -44,6 +44,8 @@ _LOGGER = logging.getLogger(__name__)
 _ISSUE_GRACE_S = 30
 _LID_OPEN = frozenset({"lid open", "lid_open"})
 _MIN_REMAINING_S = 60
+# How often an offline grill on Ayla is looked up on AWS again.
+_AWS_RECHECK_S = 600
 
 type NinjaWoodfireConfigEntry = ConfigEntry[NinjaWoodfireCoordinator]
 
@@ -84,7 +86,7 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
         self.client = client
         self.aws = aws
         self.transport: GrillTransport = client
-        self._aws_checked = False
+        self._aws_checked_at: float | None = None
         self.dsn = dsn
         self.capabilities = capabilities
         self._device_key = device_key
@@ -115,7 +117,7 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
     async def _async_update_data(self) -> CombinedState:
         try:
             state = await self.transport.get_combined_state(self.dsn)
-            if self.aws is not None and not self._aws_checked:
+            if self._should_try_aws(state):
                 state = await self._try_aws(state)
         except AuthError as err:
             raise ConfigEntryAuthFailed(str(err)) from err
@@ -139,13 +141,23 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
     def backend(self) -> str:
         return "ayla" if self.transport is self.client else "aws"
 
+    def _should_try_aws(self, state: CombinedState) -> bool:
+        """At setup, then every few minutes while Ayla reports the grill offline."""
+        if self.aws is None or self.transport is not self.client:
+            return False
+        if self._aws_checked_at is None:
+            return True
+        return not state.online and time.monotonic() - self._aws_checked_at >= _AWS_RECHECK_S
+
     async def _try_aws(self, ayla: CombinedState) -> CombinedState:
         """Switch to AWS if the grill reports there more recently than to Ayla."""
-        self._aws_checked = True
+        first = self._aws_checked_at is None
+        self._aws_checked_at = time.monotonic()
         try:
             device = await self.aws.find_device(self.dsn)
         except TransportError as err:
-            _LOGGER.info("SharkNinja AWS backend unavailable (%s); using Ayla", err)
+            if first:
+                _LOGGER.info("SharkNinja AWS backend unavailable (%s); using Ayla", err)
             return ayla
         if device is None:
             return ayla

@@ -124,3 +124,50 @@ async def test_without_aws_client_the_backend_is_ayla(coordinator):
     coordinator.client.get_combined_state.return_value = mk_state()
     await coordinator._async_update_data()
     assert coordinator.backend == "ayla"
+
+
+def _offline(state):
+    state.online = False
+    state.connection_status = "Offline"
+    return state
+
+
+async def test_offline_on_ayla_rechecks_aws_every_ten_minutes(hass, entry, freezer, caplog):
+    caplog.set_level(logging.INFO)
+    aws = _aws(None)
+    await setup_integration(hass, entry, _ayla(_offline(mk_state())), aws)
+    coordinator = entry.runtime_data
+    for tick, checks in ((599, 1), (1, 2), (300, 2)):
+        freezer.tick(tick)
+        await coordinator.async_refresh()
+        assert aws.find_device.await_count == checks
+    aws.find_device.return_value = aws_device()
+    freezer.tick(300)
+    await coordinator.async_refresh()
+    assert coordinator.backend == "aws"
+    assert coordinator.data.online is True
+    freezer.tick(3600)
+    await coordinator.async_refresh()
+    assert aws.find_device.await_count == 3
+    switched = [r for r in caplog.records if "AWS backend; using it" in r.getMessage()]
+    assert [r.levelno for r in switched] == [logging.INFO]
+
+
+async def test_online_on_ayla_does_not_recheck_aws(hass, entry, freezer):
+    aws = _aws(None)
+    await setup_integration(hass, entry, _ayla(), aws)
+    freezer.tick(3600)
+    await entry.runtime_data.async_refresh()
+    assert aws.find_device.await_count == 1
+
+
+async def test_failing_recheck_is_logged_once(hass, entry, freezer, caplog):
+    caplog.set_level(logging.INFO)
+    aws = mock_aws()
+    aws.find_device.side_effect = TransportError("down")
+    await setup_integration(hass, entry, _ayla(_offline(mk_state())), aws)
+    freezer.tick(600)
+    await entry.runtime_data.async_refresh()
+    assert aws.find_device.await_count == 2
+    assert entry.runtime_data.last_update_success
+    assert sum("down" in r.getMessage() for r in caplog.records) == 1
