@@ -5,12 +5,14 @@ import asyncio
 import logging
 import time
 from collections.abc import Awaitable
+from datetime import datetime
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
+from homeassistant.util import dt as dt_util
 
 from ._lib.api import GrillTransport
 from ._lib.api.aws import AwsCloudClient, is_connected, state_from_device
@@ -115,6 +117,10 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
         self._prev_grill_state: str | None = None
         self._reset_cook_flags()
         self._offline_logged = False
+        # Poll health, for the cloud diagnostic entities.
+        self.last_success_at: datetime | None = None
+        self.failed_polls = 0
+        self.last_error: str | None = None
 
     # ------------------------------------------------------------------ polling
 
@@ -125,9 +131,11 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
                 switch = self._try_ayla if self.backend == "aws" else self._try_aws
                 state = await switch(state)
         except AuthError as err:
-            raise ConfigEntryAuthFailed(str(err)) from err
+            raise self._failed(ConfigEntryAuthFailed(str(err))) from err
         except TransportError as err:
-            raise UpdateFailed(f"transport: {err}") from err
+            raise self._failed(UpdateFailed(f"transport: {err}")) from err
+        self.last_success_at = dt_util.utcnow()
+        self.failed_polls = 0
         self._normalize(state)
         active = (
             state.online
@@ -141,6 +149,17 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
         else:
             self._prev_grill_state = None
         return state
+
+    def _failed(self, err: Exception) -> Exception:
+        self.failed_polls += 1
+        self.last_error = str(err)
+        return err
+
+    @callback
+    def _async_refresh_finished(self) -> None:
+        # HA skips listeners on repeated failures; the failure counter still moved.
+        if not self.last_update_success and self.failed_polls > 1:
+            self.async_update_listeners()
 
     @property
     def backend(self) -> str:

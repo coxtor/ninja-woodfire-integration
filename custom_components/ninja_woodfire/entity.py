@@ -11,6 +11,8 @@ from .coordinator import NinjaWoodfireCoordinator
 class NinjaWoodfireEntity(CoordinatorEntity[NinjaWoodfireCoordinator]):
     _attr_has_entity_name = True
     _requires_live_state = True
+    # Off for entities that stay meaningful while the cloud cannot be polled.
+    _requires_successful_poll = True
 
     def __init__(self, coordinator: NinjaWoodfireCoordinator) -> None:
         super().__init__(coordinator)
@@ -26,6 +28,5 @@ class NinjaWoodfireEntity(CoordinatorEntity[NinjaWoodfireCoordinator]):
 
     @property
     def available(self) -> bool:
-        return super().available and (
-            not self._requires_live_state or self.coordinator.state_online
-        )
+        polled = self.coordinator.last_update_success or not self._requires_successful_poll
+        return polled and (not self._requires_live_state or self.coordinator.state_online)

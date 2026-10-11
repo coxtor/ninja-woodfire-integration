@@ -233,6 +233,7 @@ STAYS_AVAILABLE = {
     "cook_duration", "cook_temp", "probe0_target_temp", "probe1_target_temp",
     "cook_mode", "cook_smoke", "cook_skip_preheat", "probe0_enabled", "probe1_enabled",
     "firmware_version", "oem_model", "dsn", "stop_cook", "cloud_connected", "cloud_backend",
+    "last_report", "wifi_signal", "last_successful_poll", "failed_polls",
 }
 
 

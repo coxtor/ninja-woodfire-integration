@@ -68,7 +68,11 @@
       "firmware_version": { "name": "Firmware-Version" },
       "oem_model": { "name": "Modell" },
       "dsn": { "name": "Geräte-Seriennr. (DSN)" },
-      "cloud_backend": { "name": "Cloud-Backend" }
+      "cloud_backend": { "name": "Cloud-Backend" },
+      "last_report": { "name": "Letzte Meldung" },
+      "wifi_signal": { "name": "WLAN-Signal" },
+      "last_successful_poll": { "name": "Letzte erfolgreiche Abfrage" },
+      "failed_polls": { "name": "Fehlgeschlagene Abfragen" }
     },
     "binary_sensor": {
       "lid_open": { "name": "Deckel" },

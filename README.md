@@ -23,6 +23,9 @@ For a custom Lovelace card, see [ninja-woodfire-card](https://github.com/coxtor/
   number (heat-level for grill, °C for everything else). Duration,
   smoke, per-probe targets — changes during a running cook are applied
   live and keep heat level, probe targets and elapsed time.
+- Cloud diagnostic entities: connection, backend, last report, Wi-Fi
+  signal (AWS only), last successful poll and failed polls with the
+  last error — readable during an outage.
 - Adaptive polling — every 3 s while cooking, 10 s while idle.
 - Auto-reconnect on token expiry; re-authentication prompt when the
   password changes.

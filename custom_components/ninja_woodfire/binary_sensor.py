@@ -25,6 +25,7 @@ class NinjaBinarySensorDescription(BinarySensorEntityDescription):
     value_fn: Callable[[CombinedState], bool | None]
     attrs_fn: Callable[[CombinedState], dict[str, Any]] | None = None
     requires_live_state: bool = True
+    requires_successful_poll: bool = True
 
 
 BINARY_SENSORS: tuple[NinjaBinarySensorDescription, ...] = (
@@ -64,6 +65,7 @@ BINARY_SENSORS: tuple[NinjaBinarySensorDescription, ...] = (
         value_fn=lambda s: s.online,
         attrs_fn=lambda s: {"connection_status": s.connection_status},
         requires_live_state=False,
+        requires_successful_poll=False,
     ),
 )
 
@@ -88,6 +90,7 @@ class NinjaBinarySensor(NinjaWoodfireEntity, BinarySensorEntity):
         super().__init__(coordinator)
         self.entity_description = description
         self._requires_live_state = description.requires_live_state
+        self._requires_successful_poll = description.requires_successful_poll
         self._attr_unique_id = f"{coordinator.dsn}_{description.key}"
 
     @property

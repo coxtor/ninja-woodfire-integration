@@ -4,7 +4,13 @@ from pathlib import Path
 from custom_components.ninja_woodfire.binary_sensor import BINARY_SENSORS
 from custom_components.ninja_woodfire.button import BUTTONS
 from custom_components.ninja_woodfire.number import CookTempNumber
-from custom_components.ninja_woodfire.sensor import DIAGNOSTICS, SENSORS, NinjaSensor, _cook_phase
+from custom_components.ninja_woodfire.sensor import (
+    CLOUD_SENSORS,
+    DIAGNOSTICS,
+    SENSORS,
+    NinjaSensor,
+    _cook_phase,
+)
 from custom_components.ninja_woodfire.switch import SWITCHES
 
 from .conftest import cooking, mk_state
@@ -34,7 +40,7 @@ def test_paused_states_keep_cooking_phase():
 
 def test_translations_cover_all_entities():
     keys = {
-        "sensor": {d.translation_key for d in SENSORS} | {d.translation_key for d in DIAGNOSTICS},
+        "sensor": {d.translation_key for d in (*SENSORS, *DIAGNOSTICS, *CLOUD_SENSORS)},
         "binary_sensor": {d.translation_key for d in BINARY_SENSORS},
         "switch": {d.translation_key for d in SWITCHES},
         "button": {d.translation_key for d in BUTTONS},

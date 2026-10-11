@@ -262,6 +262,8 @@ class CombinedState:
     # last reported any of these values. If older than ~60s the grill is
     # most likely off / in standby and the cached temps are stale.
     last_updated_at: Any = None  # datetime | None at runtime
+    # Wi-Fi signal in dBm; only the AWS telemetry reports it.
+    rssi: int | None = None
 
     def state_age_seconds(self) -> float | None:
         """Seconds since the grill last reported, or None if unknown."""

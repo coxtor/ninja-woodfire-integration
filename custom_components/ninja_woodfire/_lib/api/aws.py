@@ -14,7 +14,7 @@ from typing import Any
 import aiohttp
 
 from ..const import COOK_MODES, CloudRegion
-from ..models import CombinedState, CookState, GrillState, ProbeState, _parse_value
+from ..models import CombinedState, CookState, GrillState, ProbeState, _int, _parse_value
 from .auth0 import Auth0Session
 from .commands import cook_command, stop_command
 from .errors import TransportError
@@ -105,6 +105,7 @@ def state_from_device(dsn: str, device: dict[str, Any]) -> CombinedState:
         online=connected is not False,
         connection_status=None if connected is None else "Online" if connected else "Offline",
         last_updated_at=_timestamp(device.get("updatedAt")),
+        rssi=_int(telemetry.get("RSSI")),
     )
 
 

@@ -68,7 +68,11 @@
       "firmware_version": { "name": "Firmware version" },
       "oem_model": { "name": "Model" },
       "dsn": { "name": "Device serial (DSN)" },
-      "cloud_backend": { "name": "Cloud backend" }
+      "cloud_backend": { "name": "Cloud backend" },
+      "last_report": { "name": "Last report" },
+      "wifi_signal": { "name": "Wi-Fi signal" },
+      "last_successful_poll": { "name": "Last successful poll" },
+      "failed_polls": { "name": "Failed polls" }
     },
     "binary_sensor": {
       "lid_open": { "name": "Lid" },

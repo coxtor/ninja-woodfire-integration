@@ -14,7 +14,11 @@ from homeassistant.components.sensor import (
     SensorStateClass,
 )
 from homeassistant.helpers.entity import EntityCategory
-from homeassistant.const import PERCENTAGE, UnitOfTemperature
+from homeassistant.const import (
+    PERCENTAGE,
+    SIGNAL_STRENGTH_DECIBELS_MILLIWATT,
+    UnitOfTemperature,
+)
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
@@ -373,6 +377,46 @@ DIAGNOSTICS: tuple[NinjaDiagnosticDescription, ...] = (
 )
 
 
+# Cloud and poll health, read from the coordinator rather than the grill state.
+@dataclass(frozen=True, kw_only=True)
+class NinjaCloudSensorDescription(SensorEntityDescription):
+    value_fn: Callable[[NinjaWoodfireCoordinator], Any]
+    attrs_fn: Callable[[NinjaWoodfireCoordinator], dict[str, Any]] | None = None
+    requires_successful_poll: bool = False
+
+
+CLOUD_SENSORS: tuple[NinjaCloudSensorDescription, ...] = (
+    NinjaCloudSensorDescription(
+        key="last_report",
+        translation_key="last_report",
+        device_class=SensorDeviceClass.TIMESTAMP,
+        value_fn=lambda c: c.data.last_updated_at,
+    ),
+    NinjaCloudSensorDescription(
+        key="wifi_signal",
+        translation_key="wifi_signal",
+        device_class=SensorDeviceClass.SIGNAL_STRENGTH,
+        native_unit_of_measurement=SIGNAL_STRENGTH_DECIBELS_MILLIWATT,
+        state_class=SensorStateClass.MEASUREMENT,
+        value_fn=lambda c: c.data.rssi,
+        requires_successful_poll=True,
+    ),
+    NinjaCloudSensorDescription(
+        key="last_successful_poll",
+        translation_key="last_successful_poll",
+        device_class=SensorDeviceClass.TIMESTAMP,
+        value_fn=lambda c: c.last_success_at,
+    ),
+    NinjaCloudSensorDescription(
+        key="failed_polls",
+        translation_key="failed_polls",
+        icon="mdi:cloud-alert",
+        value_fn=lambda c: c.failed_polls,
+        attrs_fn=lambda c: {"last_error": c.last_error},
+    ),
+)
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: NinjaWoodfireConfigEntry,
@@ -381,6 +425,7 @@ async def async_setup_entry(
     coordinator = entry.runtime_data
     entities: list[SensorEntity] = [NinjaSensor(coordinator, desc) for desc in SENSORS]
     entities.extend(NinjaDiagnosticSensor(coordinator, desc) for desc in DIAGNOSTICS)
+    entities.extend(NinjaCloudSensor(coordinator, desc) for desc in CLOUD_SENSORS)
     async_add_entities(entities)
 
 
@@ -420,6 +465,7 @@ class NinjaDiagnosticSensor(NinjaWoodfireEntity, SensorEntity):
 
     _attr_entity_category = EntityCategory.DIAGNOSTIC
     _requires_live_state = False
+    _requires_successful_poll = False
 
     def __init__(
         self,
@@ -437,3 +483,28 @@ class NinjaDiagnosticSensor(NinjaWoodfireEntity, SensorEntity):
         if self._info_key in ("dsn", "backend"):
             return getattr(self.coordinator, self._info_key)
         return self.coordinator.device_info_extra.get(self._info_key) or None
+
+
+class NinjaCloudSensor(NinjaWoodfireEntity, SensorEntity):
+    entity_description: NinjaCloudSensorDescription
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _requires_live_state = False
+
+    def __init__(
+        self,
+        coordinator: NinjaWoodfireCoordinator,
+        description: NinjaCloudSensorDescription,
+    ) -> None:
+        super().__init__(coordinator)
+        self.entity_description = description
+        self._requires_successful_poll = description.requires_successful_poll
+        self._attr_unique_id = f"{coordinator.dsn}_{description.key}"
+
+    @property
+    def native_value(self) -> Any:
+        return self.entity_description.value_fn(self.coordinator)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any] | None:
+        fn = self.entity_description.attrs_fn
+        return None if fn is None else fn(self.coordinator)
