@@ -114,6 +114,8 @@ COOKING_STATES = frozenset({"cooking", "cook", "heat"})
 REST_STATES = frozenset({"rest", "resting"})
 PAUSED_STATES = frozenset({"flip", "get food", "get_food", "lid open", "lid_open"})
 ACTIVE_STATES = PREHEAT_STATES | COOKING_STATES | REST_STATES | PAUSED_STATES
+# Not heating (compared casefolded). "done" is excluded: the chamber is still hot.
+IDLE_STATES = frozenset({"idle", "none", "powered off", "unknown", ""})
 
 PROBE_MODE_MANUAL = "manual"
 PROBE_MODE_PRESET = "preset"

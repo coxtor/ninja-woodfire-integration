@@ -47,7 +47,7 @@ async def _maybe_skip_preheat_now(
     """
     if not new_value:
         return
-    if coordinator.data is not None and is_preheating(coordinator.data):
+    if coordinator.state_online and is_preheating(coordinator.data):
         await coordinator.async_skip_preheat()
 
 
@@ -129,6 +129,7 @@ async def async_setup_entry(
 
 
 class NinjaSwitch(NinjaWoodfireEntity, SwitchEntity):
+    _requires_live_state = False
     entity_description: NinjaSwitchDescription
 
     def __init__(

@@ -16,6 +16,7 @@ AUTH0 = "https://logineu.sharkninja.com/oauth/token"
 SIGN_IN = "https://user-field-eu.aylanetworks.com/api/v1/token_sign_in"
 REFRESH = "https://user-field-eu.aylanetworks.com/users/refresh_token.json"
 PROPS = "https://ads-eu.aylanetworks.com/apiv1/dsns/X/properties.json"
+DEVICE = "https://ads-eu.aylanetworks.com/apiv1/dsns/X.json"
 
 
 def _login_mocks(aioclient_mock):
@@ -27,6 +28,7 @@ async def test_expired_token_with_failing_refresh_relogs_in(hass, aioclient_mock
     _login_mocks(aioclient_mock)
     aioclient_mock.post(REFRESH, status=401)
     aioclient_mock.get(PROPS, json=[])
+    aioclient_mock.get(DEVICE, json={"device": {"connection_status": "Online"}})
     client = AylaCloudClient("a@b.c", "pw", session=async_get_clientsession(hass))
     client._ayla = AylaSession("old", "rt", time.time() - 1)
 
@@ -46,6 +48,7 @@ async def test_401_on_read_reauthenticates_and_retries(hass, aioclient_mock):
         return AiohttpClientMockResponse(method, url, status=status, json=[])
 
     aioclient_mock.get(PROPS, side_effect=props)
+    aioclient_mock.get(DEVICE, json={"device": {"connection_status": "Online"}})
     client = AylaCloudClient("a@b.c", "pw", session=async_get_clientsession(hass))
     client._ayla = AylaSession("revoked", "rt", time.time() + 3600)
 

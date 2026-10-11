@@ -16,7 +16,7 @@ import math
 from dataclasses import dataclass, field
 from typing import Any
 
-from .const import ACTIVE_STATES
+from .const import ACTIVE_STATES, IDLE_STATES
 
 
 def _parse_value(raw: Any) -> dict[str, Any]:
@@ -257,18 +257,23 @@ class CombinedState:
     cook: CookState = field(default_factory=CookState)
     probes: ProbeState = field(default_factory=ProbeState)
     online: bool = True
+    connection_status: str | None = None
     # ISO-8601 timestamp from `property.data_updated_at` — when the grill
     # last reported any of these values. If older than ~60s the grill is
     # most likely off / in standby and the cached temps are stale.
     last_updated_at: Any = None  # datetime | None at runtime
 
+    def state_age_seconds(self) -> float | None:
+        """Seconds since the grill last reported, or None if unknown."""
+        if self.last_updated_at is None:
+            return None
+        from datetime import datetime, timezone
+        return (datetime.now(tz=timezone.utc) - self.last_updated_at).total_seconds()
+
     def is_stale(self, max_age_seconds: int = 60) -> bool:
         """True if the cloud's last-reported timestamp is too old to trust."""
-        if self.last_updated_at is None:
-            return False  # be lenient if we can't tell
-        from datetime import datetime, timezone
-        age = (datetime.now(tz=timezone.utc) - self.last_updated_at).total_seconds()
-        return age > max_age_seconds
+        age = self.state_age_seconds()
+        return age is not None and age > max_age_seconds
 
     # Modes that exercise each chamber sensor. Outside this set the
     # cloud may keep returning a (stale or noisy) value but the
@@ -287,13 +292,13 @@ class CombinedState:
                   reports meaningfully when smoke=on; air chamber
                   only matters in air-crisp / bake / dehydrate).
         """
-        if value is None:
+        if value is None or not self.online:
             return False
         if self.is_stale():
             return False
         # Idle grill: stale cache from the last cook session keeps
         # leaking — anything above ambient is implausible.
-        if self.grill.state == "idle" and value > 50:
+        if self.grill.state.casefold() in IDLE_STATES and value > 50:
             return False
         # Active cook: gate sensors by which chamber is in play.
         if self.grill.state in ACTIVE_STATES:

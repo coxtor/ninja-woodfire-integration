@@ -13,6 +13,14 @@ from custom_components.ninja_woodfire._lib.models import (
     GrillState,
     ProbeState,
 )
+from custom_components.ninja_woodfire.const import (
+    EVENT_COOK_DONE,
+    EVENT_COOK_HALFTIME,
+    EVENT_COOK_STARTED,
+    EVENT_PREHEAT_COMPLETE,
+    EVENT_PROBE_HALFWAY,
+    EVENT_PROBE_TARGET_REACHED,
+)
 from custom_components.ninja_woodfire.coordinator import NinjaWoodfireCoordinator
 
 pytest_plugins = ["pytest_homeassistant_custom_component"]
@@ -80,3 +88,12 @@ def coordinator(hass, entry):
     c = NinjaWoodfireCoordinator(hass, entry, client, DSN, WOODFIRE_PRO_XL, 42)
     c._burst_refresh = AsyncMock()
     return c
+
+
+@pytest.fixture
+def events(hass):
+    seen = []
+    for ev in (EVENT_COOK_DONE, EVENT_COOK_HALFTIME, EVENT_COOK_STARTED, EVENT_PREHEAT_COMPLETE,
+               EVENT_PROBE_HALFWAY, EVENT_PROBE_TARGET_REACHED):
+        hass.bus.async_listen(ev, lambda e: seen.append(e.event_type))
+    return seen

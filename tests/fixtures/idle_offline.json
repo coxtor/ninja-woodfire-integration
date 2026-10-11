@@ -1,0 +1,23 @@
+{
+  "_note": "Idle grill, module offline for ~23h: last cloud datapoint is the snapshot pushed on the grill's previous connect. Reproduces the original bug report. Also the ambient anchor for the unit question: grill 79.5 / air 76.6 are Fahrenheit, i.e. 26.4 C / 24.8 C, which is what a cold appliance in a room reads. smoke 227.1 (108.4 C) is not ambient in either unit - that channel is unexplained.",
+  "_source": "captured from a real OG900-EU (Ninja Woodfire Pro Connect XL); DSN/MAC/IP scrubbed, firmware JSON byte-preserved",
+  "device": {
+    "oem_model": "OG900-EU",
+    "connection_status": "Offline",
+    "connected_at": "2026-08-18T17:25:53Z"
+  },
+  "properties": {
+    "GET_GrillState": {
+      "value": "{\n\t\"id\":\t23,\n\t\"state\":\t\"idle\",\n\t\"message\":\t\"\",\n\t\"eventmask\":\t\"0x00\",\n\t\"sim\":\t0,\n\t\"inputs\":\t{\n\t\t\"temps\":\t{\n\t\t\t\"grill\":\t79.5,\n\t\t\t\"air\":\t76.6,\n\t\t\t\"smoke\":\t227.1,\n\t\t\t\"probe0_a\":\t0,\n\t\t\t\"probe0_b\":\t0,\n\t\t\t\"probe1_a\":\t0,\n\t\t\t\"probe1_b\":\t0,\n\t\t\t\"main\":\t6542.4,\n\t\t\t\"ui\":\t6513.6,\n\t\t\t\"id\":\t23\n\t\t},\n\t\t\"io\":\t{\n\t\t\t\"lid open\":\t0,\n\t\t\t\"id\":\t23\n\t\t},\n\t\t\"id\":\t23\n\t}\n}",
+      "data_updated_at": "2026-08-18T17:25:56Z"
+    },
+    "GET_CookState": {
+      "value": "{\n\t\"id\":\t23,\n\t\"state\":\t{\n\t\t\"state\":\t\"none\"\n\t}\n}",
+      "data_updated_at": "2026-08-18T17:25:56Z"
+    },
+    "GET_ProbeState": {
+      "value": "{\n\t\"probes\":\t[{\n\t\t\t\"name\":\t\"probe0\",\n\t\t\t\"plugged in\":\t0,\n\t\t\t\"active\":\t0,\n\t\t\t\"temp\":\t0,\n\t\t\t\"progress\":\t100\n\t\t}, {\n\t\t\t\"name\":\t\"probe1\",\n\t\t\t\"plugged in\":\t0,\n\t\t\t\"active\":\t0,\n\t\t\t\"temp\":\t0,\n\t\t\t\"progress\":\t100\n\t\t}],\n\t\"id\":\t23\n}",
+      "data_updated_at": "2026-08-18T17:25:57Z"
+    }
+  }
+}

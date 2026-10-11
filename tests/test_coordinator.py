@@ -6,7 +6,6 @@ import pytest
 from homeassistant.exceptions import HomeAssistantError
 
 from custom_components.ninja_woodfire.const import (
-    EVENT_COOK_DONE,
     EVENT_COOK_HALFTIME,
     EVENT_COOK_STARTED,
     EVENT_PREHEAT_COMPLETE,
@@ -21,15 +20,6 @@ from .conftest import cooking, mk_state, probe
 
 def sent(coordinator):
     return coordinator.client.start_cook.call_args.kwargs
-
-
-@pytest.fixture
-def events(hass):
-    seen = []
-    for ev in (EVENT_COOK_DONE, EVENT_COOK_HALFTIME, EVENT_COOK_STARTED, EVENT_PREHEAT_COMPLETE,
-               EVENT_PROBE_HALFWAY, EVENT_PROBE_TARGET_REACHED):
-        hass.bus.async_listen(ev, lambda e: seen.append(e.event_type))
-    return seen
 
 
 # ---------------------------------------------------------------- re-issue

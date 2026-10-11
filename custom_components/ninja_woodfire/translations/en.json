@@ -72,7 +72,8 @@
       "probe0_plugged_in": { "name": "Probe 1 connected" },
       "probe1_plugged_in": { "name": "Probe 2 connected" },
       "probe0_active": { "name": "Probe 1 active" },
-      "probe1_active": { "name": "Probe 2 active" }
+      "probe1_active": { "name": "Probe 2 active" },
+      "cloud_connected": { "name": "Cloud connection" }
     },
     "select": {
       "cook_mode": { "name": "Cook mode" }

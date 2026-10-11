@@ -1,0 +1,22 @@
+{
+  "_note": "Grill plugged in but control panel off ('powered OFF'). The chamber is COLD: 82.4 on the wire is Fahrenheit, i.e. 28.0 C, room temperature. This note used to read 'leftovers from a previous cook (grill 82.4C)' - that was the unit bug talking, and the reading is a true live ambient measurement. For a genuinely hot not-cooking chamber see aws_powered_off_lid_open.json.",
+  "_source": "captured from a real OG900-EU (Ninja Woodfire Pro Connect XL); DSN/MAC/IP scrubbed, firmware JSON byte-preserved",
+  "device": {
+    "oem_model": "OG900-EU",
+    "connection_status": "Online"
+  },
+  "properties": {
+    "GET_GrillState": {
+      "value": "{\n\t\"id\":\t23,\n\t\"state\":\t\"powered OFF\",\n\t\"message\":\t\"\",\n\t\"eventmask\":\t\"0x00\",\n\t\"sim\":\t0,\n\t\"inputs\":\t{\n\t\t\"temps\":\t{\n\t\t\t\"grill\":\t82.4,\n\t\t\t\"air\":\t80.2,\n\t\t\t\"smoke\":\t226.9,\n\t\t\t\"probe0_a\":\t0,\n\t\t\t\"probe0_b\":\t0,\n\t\t\t\"probe1_a\":\t0,\n\t\t\t\"probe1_b\":\t0,\n\t\t\t\"main\":\t6542.4,\n\t\t\t\"ui\":\t6513.6,\n\t\t\t\"id\":\t23\n\t\t},\n\t\t\"io\":\t{\n\t\t\t\"lid open\":\t0,\n\t\t\t\"id\":\t23\n\t\t},\n\t\t\"id\":\t23\n\t}\n}",
+      "data_updated_at": "2026-08-18T12:27:29Z"
+    },
+    "GET_CookState": {
+      "value": "{\n\t\"id\":\t23,\n\t\"state\":\t{\n\t\t\"state\":\t\"none\"\n\t}\n}",
+      "data_updated_at": "2026-08-18T12:27:28Z"
+    },
+    "GET_ProbeState": {
+      "value": "{\n\t\"probes\":\t[{\n\t\t\t\"name\":\t\"probe0\",\n\t\t\t\"plugged in\":\t0,\n\t\t\t\"active\":\t0,\n\t\t\t\"temp\":\t0,\n\t\t\t\"progress\":\t100\n\t\t}, {\n\t\t\t\"name\":\t\"probe1\",\n\t\t\t\"plugged in\":\t0,\n\t\t\t\"active\":\t0,\n\t\t\t\"temp\":\t0,\n\t\t\t\"progress\":\t100\n\t\t}],\n\t\"id\":\t23\n}",
+      "data_updated_at": "2026-08-18T12:27:30Z"
+    }
+  }
+}

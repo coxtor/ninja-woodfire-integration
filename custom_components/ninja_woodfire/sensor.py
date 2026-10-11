@@ -19,7 +19,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from ._lib.capabilities import grill_level
-from ._lib.const import GRILL_HEAT_LEVELS
+from ._lib.const import GRILL_HEAT_LEVELS, IDLE_STATES
 from ._lib.models import CombinedState
 
 from .const import COOKING_STATES, PAUSED_STATES, PREHEAT_STATES, REST_STATES
@@ -133,9 +133,8 @@ def _plausible_probe_temp(state: CombinedState, idx: int) -> float | None:
     # Idle grill + probe reading hotter than ambient = stale cache.
     # Probes report ambient ~20-30°C when plugged into a cold grill;
     # anything above 50 °C while idle is leftover from a prior cook.
-    if state.grill.state in ("idle", "powered OFF", "powered_off"):
-        if raw > 50:
-            return None
+    if state.grill.state.casefold() in IDLE_STATES and raw > 50:
+        return None
     return raw
 
 
@@ -414,6 +413,7 @@ class NinjaDiagnosticSensor(NinjaWoodfireEntity, SensorEntity):
     """Static-info sensor (firmware version, model, etc.) — populated once at setup."""
 
     _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _requires_live_state = False
 
     def __init__(
         self,

@@ -32,6 +32,7 @@ async def async_setup_entry(
 
 
 class CookDurationNumber(NinjaWoodfireEntity, NumberEntity):
+    _requires_live_state = False
     _attr_translation_key = "cook_duration"
     _attr_native_unit_of_measurement = UnitOfTime.MINUTES
     _attr_native_min_value = 1
@@ -77,6 +78,7 @@ class CookTempNumber(NinjaWoodfireEntity, NumberEntity):
       celsius modes            → mode-specific min/max, °C
     """
 
+    _requires_live_state = False
     _attr_translation_key = "cook_temp"
     _attr_mode = NumberMode.BOX
     _attr_entity_category = EntityCategory.CONFIG
@@ -137,6 +139,7 @@ class ProbeSetpointNumber(NinjaWoodfireEntity, NumberEntity):
     is sent with this probe targeting at all.
     """
 
+    _requires_live_state = False
     _attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
     _attr_native_min_value = 30
     _attr_native_max_value = 110

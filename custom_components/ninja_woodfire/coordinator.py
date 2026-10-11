@@ -98,6 +98,7 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
         # Lifecycle-event tracking.
         self._prev_grill_state: str | None = None
         self._reset_cook_flags()
+        self._offline_logged = False
 
     # ------------------------------------------------------------------ polling
 
@@ -110,11 +111,29 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
             raise UpdateFailed(f"transport: {err}") from err
         self._normalize(state)
         active = (
-            is_active(state) or state.cook.state in ACTIVE_STATES
-        ) and not state.is_stale()
+            state.online
+            and (is_active(state) or state.cook.state in ACTIVE_STATES)
+            and not state.is_stale()
+        )
         self.update_interval = SCAN_INTERVAL_ACTIVE if active else SCAN_INTERVAL_IDLE
-        self._emit_lifecycle_events(state)
+        self._track_connection(state)
+        if state.online:
+            self._emit_lifecycle_events(state)
+        else:
+            self._prev_grill_state = None
         return state
+
+    def _track_connection(self, state: CombinedState) -> None:
+        if not state.online and not self._offline_logged:
+            self._offline_logged = True
+            _LOGGER.warning(
+                "Grill %s is offline (cloud reports %r); its state is not live",
+                self.dsn,
+                state.connection_status,
+            )
+        elif state.online and self._offline_logged:
+            self._offline_logged = False
+            _LOGGER.info("Grill %s is back online", self.dsn)
 
     def _normalize(self, state: CombinedState) -> None:
         if not is_active(state):
@@ -244,8 +263,12 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
     # ------------------------------------------------------------------ live state
 
     @property
+    def state_online(self) -> bool:
+        return self.data is not None and self.data.online
+
+    @property
     def is_cook_active(self) -> bool:
-        return self.data is not None and is_active(self.data)
+        return self.state_online and is_active(self.data)
 
     def _live_temp(self, state: CombinedState) -> int | None:
         if state.grill.mode == "grill":
@@ -332,6 +355,8 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
 
     async def async_start_cook(self) -> None:
         """Send the staged cook settings to the grill."""
+        if self.data is not None and not self.data.online:
+            raise HomeAssistantError("The grill is offline")
         mode = self.capabilities.get_mode(self.cook_setting_mode)
         if mode is None:
             raise HomeAssistantError(
@@ -370,7 +395,7 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
 
     async def async_skip_preheat(self) -> None:
         live = self.data
-        if live is None or not is_preheating(live):
+        if live is None or not live.online or not is_preheating(live):
             raise HomeAssistantError("The grill is not preheating")
         await self._reissue(live, skip_preheat=True)
         await self._burst_refresh()

@@ -1,0 +1,22 @@
+{
+  "_note": "Mains zero-cross lost ('zc loss' cook state) while the Wi-Fi module was still up - grill switched off at the socket. Chamber at ambient: 83.1 / 81.1 on the wire is Fahrenheit, i.e. 28.4 C / 27.3 C.",
+  "_source": "captured from a real OG900-EU (Ninja Woodfire Pro Connect XL); DSN/MAC/IP scrubbed, firmware JSON byte-preserved",
+  "device": {
+    "oem_model": "OG900-EU",
+    "connection_status": "Online"
+  },
+  "properties": {
+    "GET_GrillState": {
+      "value": "{\n\t\"id\":\t24,\n\t\"state\":\t\"powered OFF\",\n\t\"message\":\t\"\",\n\t\"eventmask\":\t\"0x00\",\n\t\"sim\":\t0,\n\t\"inputs\":\t{\n\t\t\"temps\":\t{\n\t\t\t\"grill\":\t83.1,\n\t\t\t\"air\":\t81.1,\n\t\t\t\"smoke\":\t226.9,\n\t\t\t\"probe0_a\":\t0,\n\t\t\t\"probe0_b\":\t0,\n\t\t\t\"probe1_a\":\t0,\n\t\t\t\"probe1_b\":\t0,\n\t\t\t\"main\":\t6542.4,\n\t\t\t\"ui\":\t6513.6,\n\t\t\t\"id\":\t24\n\t\t},\n\t\t\"io\":\t{\n\t\t\t\"lid open\":\t0,\n\t\t\t\"id\":\t24\n\t\t},\n\t\t\"id\":\t24\n\t}\n}",
+      "data_updated_at": "2026-08-18T12:44:49Z"
+    },
+    "GET_CookState": {
+      "value": "{\n\t\"id\":\t24,\n\t\"state\":\t{\n\t\t\"state\":\t\"zc loss\"\n\t}\n}",
+      "data_updated_at": "2026-08-18T12:44:49Z"
+    },
+    "GET_ProbeState": {
+      "value": "{\n\t\"probes\":\t[{\n\t\t\t\"name\":\t\"probe0\",\n\t\t\t\"plugged in\":\t0,\n\t\t\t\"active\":\t0,\n\t\t\t\"temp\":\t0,\n\t\t\t\"progress\":\t100\n\t\t}, {\n\t\t\t\"name\":\t\"probe1\",\n\t\t\t\"plugged in\":\t0,\n\t\t\t\"active\":\t0,\n\t\t\t\"temp\":\t0,\n\t\t\t\"progress\":\t100\n\t\t}],\n\t\"id\":\t24\n}",
+      "data_updated_at": "2026-08-18T12:44:49Z"
+    }
+  }
+}

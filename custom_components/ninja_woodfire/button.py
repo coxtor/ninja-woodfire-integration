@@ -15,6 +15,7 @@ from .entity import NinjaWoodfireEntity
 @dataclass(frozen=True, kw_only=True)
 class NinjaButtonDescription(ButtonEntityDescription):
     press_fn: Callable[[NinjaWoodfireCoordinator], Awaitable[None]]
+    requires_live_state: bool = True
 
 
 BUTTONS: tuple[NinjaButtonDescription, ...] = (
@@ -28,6 +29,7 @@ BUTTONS: tuple[NinjaButtonDescription, ...] = (
         key="stop_cook",
         translation_key="stop_cook",
         icon="mdi:stop",
+        requires_live_state=False,
         press_fn=lambda c: c.async_stop_cook(),
     ),
     NinjaButtonDescription(
@@ -58,6 +60,7 @@ class NinjaButton(NinjaWoodfireEntity, ButtonEntity):
     ) -> None:
         super().__init__(coordinator)
         self.entity_description = description
+        self._requires_live_state = description.requires_live_state
         self._attr_unique_id = f"{coordinator.dsn}_{description.key}"
 
     async def async_press(self) -> None:

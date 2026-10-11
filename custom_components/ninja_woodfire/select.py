@@ -20,6 +20,7 @@ async def async_setup_entry(
 
 
 class CookModeSelect(NinjaWoodfireEntity, SelectEntity):
+    _requires_live_state = False
     _attr_translation_key = "cook_mode"
     _attr_icon = "mdi:grill"
     _attr_entity_category = EntityCategory.CONFIG

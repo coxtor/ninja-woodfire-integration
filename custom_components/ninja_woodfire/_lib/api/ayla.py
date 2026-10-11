@@ -27,6 +27,7 @@ from ..models import CombinedState, CookState, GrillState, ProbeState
 _LOGGER = logging.getLogger(__name__)
 
 _TIMEOUT = aiohttp.ClientTimeout(total=20)
+_DEVICE_CACHE_S = 30
 
 
 class NinjaCloudError(Exception):
@@ -68,6 +69,7 @@ class AylaCloudClient:
         self._auth0_id_token: str | None = None
         self._ayla: AylaSession | None = None
         self._lock = asyncio.Lock()
+        self._devices: dict[str, tuple[float, dict[str, Any]]] = {}
 
     async def __aenter__(self) -> "AylaCloudClient":
         if self._owns_session and self._http is None:
@@ -186,6 +188,25 @@ class AylaCloudClient:
         url = f"{self._region.ayla_device_base}/apiv1/devices.json"
         return self._unwrap_list(await self._api("GET", url), "device")
 
+    async def get_device(self, dsn: str) -> dict[str, Any]:
+        url = f"{self._region.ayla_device_base}/apiv1/dsns/{dsn}.json"
+        data = await self._api("GET", url)
+        device = data.get("device") if isinstance(data, dict) else None
+        if not isinstance(device, dict):
+            raise TransportError(f"GET {url}: no device record")
+        return device
+
+    async def _cached_device(self, dsn: str) -> dict[str, Any] | None:
+        cached = self._devices.get(dsn)
+        if cached and time.monotonic() - cached[0] < _DEVICE_CACHE_S:
+            return cached[1]
+        try:
+            device = await self.get_device(dsn)
+        except TransportError:
+            return cached[1] if cached else None
+        self._devices[dsn] = (time.monotonic(), device)
+        return device
+
     async def get_properties(
         self, dsn: str, names: list[str] | None = None
     ) -> list[dict[str, Any]]:
@@ -218,6 +239,9 @@ class AylaCloudClient:
             elif name == PROP_PROBE_STATE:
                 state.probes = ProbeState.from_property_value(value)
         state.last_updated_at = latest_update
+        if (device := await self._cached_device(dsn)) is not None:
+            state.connection_status = device.get("connection_status")
+            state.online = str(state.connection_status).casefold() == "online"
         return state
 
     async def set_property_datapoint(

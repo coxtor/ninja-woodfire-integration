@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Any
 
 from homeassistant.components.binary_sensor import (
     BinarySensorDeviceClass,
@@ -10,6 +11,7 @@ from homeassistant.components.binary_sensor import (
     BinarySensorEntityDescription,
 )
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from ._lib.models import CombinedState
@@ -21,6 +23,8 @@ from .entity import NinjaWoodfireEntity
 @dataclass(frozen=True, kw_only=True)
 class NinjaBinarySensorDescription(BinarySensorEntityDescription):
     value_fn: Callable[[CombinedState], bool | None]
+    attrs_fn: Callable[[CombinedState], dict[str, Any]] | None = None
+    requires_live_state: bool = True
 
 
 BINARY_SENSORS: tuple[NinjaBinarySensorDescription, ...] = (
@@ -52,6 +56,20 @@ BINARY_SENSORS: tuple[NinjaBinarySensorDescription, ...] = (
         translation_key="probe1_active",
         value_fn=lambda s: s.probes.probes[1].active if len(s.probes.probes) > 1 else None,
     ),
+    NinjaBinarySensorDescription(
+        key="cloud_connected",
+        translation_key="cloud_connected",
+        device_class=BinarySensorDeviceClass.CONNECTIVITY,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda s: s.online,
+        attrs_fn=lambda s: {
+            "connection_status": s.connection_status,
+            "last_report_age_seconds": (
+                None if (age := s.state_age_seconds()) is None else int(age)
+            ),
+        },
+        requires_live_state=False,
+    ),
 )
 
 
@@ -74,6 +92,7 @@ class NinjaBinarySensor(NinjaWoodfireEntity, BinarySensorEntity):
     ) -> None:
         super().__init__(coordinator)
         self.entity_description = description
+        self._requires_live_state = description.requires_live_state
         self._attr_unique_id = f"{coordinator.dsn}_{description.key}"
 
     @property
@@ -81,3 +100,10 @@ class NinjaBinarySensor(NinjaWoodfireEntity, BinarySensorEntity):
         if self.coordinator.data is None:
             return None
         return self.entity_description.value_fn(self.coordinator.data)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any] | None:
+        fn = self.entity_description.attrs_fn
+        if fn is None or self.coordinator.data is None:
+            return None
+        return fn(self.coordinator.data)
