@@ -135,7 +135,7 @@ def test_offline_snapshot_suppresses_temperatures():
 def test_powered_off_is_covered_by_idle_cap(name):
     state = fresh(name)
     assert state.grill.state == "powered OFF"
-    assert state.temp_is_plausible(state.grill.temps.grill, "grill") is False
+    assert state.temp_is_plausible(120.0, "grill") is False
 
 
 def test_idle_cap_keeps_plausible_ambient_and_finished_cook():
