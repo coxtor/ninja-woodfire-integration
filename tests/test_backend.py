@@ -50,11 +50,18 @@ async def test_setup_uses_aws_when_grill_is_connected_there(hass, entry):
     assert ayla.get_combined_state.await_count == 1
 
 
-async def test_setup_uses_aws_when_its_report_is_newer(hass, entry):
+async def test_setup_ignores_a_newer_aws_report_while_disconnected(hass, entry):
     now = datetime.now(tz=timezone.utc)
     device = aws_device(connected=False, updated_at=now.isoformat().replace("+00:00", "Z"))
     await setup_integration(hass, entry, _ayla(_ayla_reported(timedelta(days=2))), _aws(device))
-    assert entry.runtime_data.backend == "aws"
+    assert entry.runtime_data.backend == "ayla"
+
+
+async def test_setup_needs_an_explicit_aws_connection(hass, entry):
+    device = aws_device()
+    del device["connectivityStatus"]
+    await setup_integration(hass, entry, _ayla(), _aws(device))
+    assert entry.runtime_data.backend == "ayla"
 
 
 async def test_setup_stays_on_ayla_when_aws_is_stale(hass, entry):
@@ -184,3 +191,58 @@ async def test_refused_aws_start_is_a_home_assistant_error(hass, entry):
     coordinator._burst_refresh = AsyncMock()
     with pytest.raises(HomeAssistantError, match="not connected"):
         await coordinator.async_start_cook()
+
+
+def _online(state):
+    state.connection_status = "Online"
+    return state
+
+
+async def test_disconnected_on_aws_switches_back_to_ayla(hass, entry, freezer, caplog):
+    caplog.set_level(logging.INFO)
+    device = aws_device()
+    ayla, aws = _ayla(_offline(mk_state())), _aws(device)
+    await setup_integration(hass, entry, ayla, aws)
+    coordinator = entry.runtime_data
+    assert coordinator.backend == "aws"
+    device["connectivityStatus"]["connected"] = False
+    freezer.tick(600)
+    await coordinator.async_refresh()
+    assert ayla.get_combined_state.await_count == 2
+    assert coordinator.backend == "aws"
+    ayla.get_combined_state.return_value = _online(mk_state())
+    for tick, checks in ((599, 2), (1, 3)):
+        freezer.tick(tick)
+        await coordinator.async_refresh()
+        assert ayla.get_combined_state.await_count == checks
+    assert coordinator.backend == "ayla"
+    assert coordinator.data.connection_status == "Online"
+    await coordinator.async_refresh()
+    assert coordinator.backend == "ayla"
+    switched = [r for r in caplog.records if "using Ayla" in r.getMessage()]
+    assert [r.levelno for r in switched] == [logging.INFO]
+
+
+async def test_connected_on_aws_does_not_check_ayla(hass, entry, freezer):
+    ayla, aws = _ayla(_online(mk_state())), _aws(aws_device())
+    await setup_integration(hass, entry, ayla, aws)
+    freezer.tick(3600)
+    await entry.runtime_data.async_refresh()
+    assert entry.runtime_data.backend == "aws"
+    assert ayla.get_combined_state.await_count == 1
+
+
+async def test_failed_first_aws_lookup_is_retried_after_a_minute(hass, entry, freezer):
+    aws = mock_aws()
+    aws.find_device.side_effect = TransportError("down")
+    await setup_integration(hass, entry, _ayla(), aws)
+    coordinator = entry.runtime_data
+    for tick, checks in ((59, 1), (1, 2), (599, 2), (1, 3)):
+        freezer.tick(tick)
+        await coordinator.async_refresh()
+        assert aws.find_device.await_count == checks
+    aws.find_device.side_effect = None
+    aws.find_device.return_value = aws_device()
+    freezer.tick(600)
+    await coordinator.async_refresh()
+    assert coordinator.backend == "aws"

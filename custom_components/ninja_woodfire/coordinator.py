@@ -13,7 +13,7 @@ from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from ._lib.api import GrillTransport
-from ._lib.api.aws import AwsCloudClient, state_from_device
+from ._lib.api.aws import AwsCloudClient, is_connected, state_from_device
 from ._lib.api.ayla import AylaCloudClient
 from ._lib.api.errors import AuthError, NinjaCloudError, TransportError
 from ._lib.capabilities import GrillCapabilities, grill_level
@@ -44,8 +44,10 @@ _LOGGER = logging.getLogger(__name__)
 _ISSUE_GRACE_S = 30
 _LID_OPEN = frozenset({"lid open", "lid_open"})
 _MIN_REMAINING_S = 60
-# How often an offline grill on Ayla is looked up on AWS again.
+# How often an offline grill is looked up on the other backend.
 _AWS_RECHECK_S = 600
+# How soon a failed first AWS lookup is retried.
+_AWS_RETRY_S = 60
 
 type NinjaWoodfireConfigEntry = ConfigEntry[NinjaWoodfireCoordinator]
 
@@ -82,11 +84,13 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
             update_interval=DEFAULT_SCAN_INTERVAL,
         )
         # Ayla stays in use for setup and rename; state and cooks go through
-        # `transport`, which switches to AWS once the grill is found live there.
+        # `transport`, which follows the backend the grill is connected to.
         self.client = client
         self.aws = aws
         self.transport: GrillTransport = client
-        self._aws_checked_at: float | None = None
+        self._aws_reached = False
+        self._aws_failed = False
+        self._backend_check_at = 0.0
         self.dsn = dsn
         self.capabilities = capabilities
         self._device_key = device_key
@@ -117,8 +121,9 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
     async def _async_update_data(self) -> CombinedState:
         try:
             state = await self.transport.get_combined_state(self.dsn)
-            if self._should_try_aws(state):
-                state = await self._try_aws(state)
+            if self._should_switch(state):
+                switch = self._try_ayla if self.backend == "aws" else self._try_aws
+                state = await switch(state)
         except AuthError as err:
             raise ConfigEntryAuthFailed(str(err)) from err
         except TransportError as err:
@@ -141,35 +146,43 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
     def backend(self) -> str:
         return "ayla" if self.transport is self.client else "aws"
 
-    def _should_try_aws(self, state: CombinedState) -> bool:
-        """At setup, then every few minutes while Ayla reports the grill offline."""
-        if self.aws is None or self.transport is not self.client:
+    def _should_switch(self, state: CombinedState) -> bool:
+        """Until AWS answers once, then every few minutes while the grill is offline."""
+        if self.aws is None or time.monotonic() < self._backend_check_at:
             return False
-        if self._aws_checked_at is None:
-            return True
-        return not state.online and time.monotonic() - self._aws_checked_at >= _AWS_RECHECK_S
+        return not state.online or (self.backend == "ayla" and not self._aws_reached)
 
     async def _try_aws(self, ayla: CombinedState) -> CombinedState:
-        """Switch to AWS if the grill reports there more recently than to Ayla."""
-        first = self._aws_checked_at is None
-        self._aws_checked_at = time.monotonic()
+        """Switch to AWS if the grill is connected there."""
         try:
             device = await self.aws.find_device(self.dsn)
         except TransportError as err:
-            if first:
+            retry = _AWS_RECHECK_S if self._aws_failed else _AWS_RETRY_S
+            self._backend_check_at = time.monotonic() + retry
+            if not self._aws_failed:
+                self._aws_failed = True
                 _LOGGER.info("SharkNinja AWS backend unavailable (%s); using Ayla", err)
             return ayla
-        if device is None:
-            return ayla
-        state = state_from_device(self.dsn, device)
-        newer = state.last_updated_at is not None and (
-            ayla.last_updated_at is None or state.last_updated_at > ayla.last_updated_at
-        )
-        if not state.online and not newer:
+        self._aws_reached = True
+        self._backend_check_at = time.monotonic() + _AWS_RECHECK_S
+        if device is None or not is_connected(device):
             return ayla
         _LOGGER.info("Grill %s is on SharkNinja's AWS backend; using it", self.dsn)
         self.transport = self.aws
-        return state
+        return state_from_device(self.dsn, device)
+
+    async def _try_ayla(self, aws: CombinedState) -> CombinedState:
+        """Switch back to Ayla if the grill is offline on AWS but online there."""
+        self._backend_check_at = time.monotonic() + _AWS_RECHECK_S
+        try:
+            ayla = await self.client.get_combined_state(self.dsn)
+        except TransportError:
+            return aws
+        if str(ayla.connection_status).casefold() != "online":
+            return aws
+        _LOGGER.info("Grill %s is offline on AWS but online on Ayla; using Ayla", self.dsn)
+        self.transport = self.client
+        return ayla
 
     def _track_connection(self, state: CombinedState) -> None:
         if not state.online and not self._offline_logged:
