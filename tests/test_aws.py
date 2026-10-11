@@ -1,3 +1,4 @@
+import asyncio
 import json
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock
@@ -384,14 +385,35 @@ async def test_start_acknowledged_by_reported_command(hass, backend, sleep):
     sleep.assert_awaited_with(aws_module._ACK_POLL_S)
 
 
-async def test_start_acknowledged_by_a_later_report(hass, aioclient_mock):
-    _listing(aioclient_mock, {"connected": True})
-    later = (datetime.now(tz=timezone.utc) + timedelta(minutes=1)).isoformat()
-    _replies(aioclient_mock, DEVICE, "get", [_shadow({"id": 1000}), _shadow({"id": 1000}), _shadow({"id": 1000}, later)])
+async def test_start_acknowledged_by_new_telemetry(hass, aioclient_mock):
+    aioclient_mock.post(AUTH0, json={"id_token": jwt("auth0|user1")})
+    aioclient_mock.get(HOUSEHOLDS, json={"households": ["hh1"]})
+    idle, preheat = aws_device(), aws_device("aws_preheat")
+    _replies(aioclient_mock, DEVICES, "get", [{"items": [idle]}, {"items": [idle]}, {"items": [preheat]}])
+    _replies(aioclient_mock, DEVICE, "get", [_shadow({"id": 1000})])
     aioclient_mock.patch(DEVICE, json={})
     await _client(hass).start_cook(DSN, **START)
     assert [p and p["id"] for p in _patches(aioclient_mock)] == [1001, None]
-    assert len(_calls(aioclient_mock, DEVICE, "GET")) == 3
+
+
+async def test_server_timestamp_alone_does_not_acknowledge(hass, aioclient_mock):
+    _listing(aioclient_mock, {"connected": True})
+    later = (datetime.now(tz=timezone.utc) + timedelta(minutes=1)).isoformat()
+    _replies(aioclient_mock, DEVICE, "get", [_shadow({"id": 1000}), _shadow({"id": 1000}, later)])
+    aioclient_mock.patch(DEVICE, json={})
+    with pytest.raises(TransportError, match="withdrawn"):
+        await _client(hass).start_cook(DSN, **START)
+    assert [p["id"] for p in _patches(aioclient_mock)] == [1001, 1000]
+
+
+async def test_cancelled_wait_withdraws_the_start(hass, aioclient_mock, sleep):
+    _listing(aioclient_mock, {"connected": True})
+    _replies(aioclient_mock, DEVICE, "get", [_shadow({"id": 1000})])
+    aioclient_mock.patch(DEVICE, json={})
+    sleep.side_effect = asyncio.CancelledError
+    with pytest.raises(asyncio.CancelledError):
+        await _client(hass).start_cook(DSN, **START)
+    assert [p["id"] for p in _patches(aioclient_mock)] == [1001, 1000]
 
 
 async def test_unacknowledged_start_is_withdrawn(hass, aioclient_mock, sleep):

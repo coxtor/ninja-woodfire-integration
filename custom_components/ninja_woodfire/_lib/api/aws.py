@@ -225,18 +225,23 @@ class AwsCloudClient:
         body = {"shadow": {"properties": {"desired": {"Cook_Command": command}}}}
         return await self._device_api(dsn, "PATCH", json=body)
 
-    async def _acknowledged(self, dsn: str, before: Any, sent_at: datetime) -> bool:
+    async def _acknowledged(self, dsn: str, before: Any, telemetry: Any) -> bool:
+        """Whether the grill itself reacted: a new reported command or new telemetry."""
         for _ in range(_ACK_TIMEOUT_S // _ACK_POLL_S):
             await _sleep(_ACK_POLL_S)
             try:
-                device = await self._device_api(dsn, "GET")
+                if _reported_command(await self._device_api(dsn, "GET")) != before:
+                    return True
+                device = await self.find_device(dsn)
             except TransportError as err:
                 _LOGGER.debug("reading back the cook command failed: %s", err)
                 continue
-            reported_at = _timestamp(device.get("updatedAt")) if isinstance(device, dict) else None
-            if _reported_command(device) != before or (reported_at and reported_at > sent_at):
+            if device is not None and device.get("telemetry") != telemetry:
                 return True
         return False
+
+    async def _withdraw(self, dsn: str) -> None:
+        await self._send_cook_command(dsn, stop_command())
 
     async def _start(self, dsn: str, command: dict[str, Any]) -> Any:
         """Send a start only to a connected grill and withdraw it unless acknowledged."""
@@ -246,11 +251,15 @@ class AwsCloudClient:
         if not is_connected(device):
             raise TransportError("grill is not connected to the AWS cloud")
         before = _reported_command(await self._device_api(dsn, "GET"))
-        sent_at = datetime.now(tz=timezone.utc)
         result = await self._send_cook_command(dsn, command)
-        if not await self._acknowledged(dsn, before, sent_at):
+        try:
+            acknowledged = await self._acknowledged(dsn, before, device.get("telemetry"))
+        except asyncio.CancelledError:
+            await asyncio.shield(self._withdraw(dsn))
+            raise
+        if not acknowledged:
             try:
-                await self._send_cook_command(dsn, stop_command())
+                await self._withdraw(dsn)
             except TransportError as err:
                 raise TransportError(
                     f"grill did not acknowledge the command and withdrawing it failed: {err}"
