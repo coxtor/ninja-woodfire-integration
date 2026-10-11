@@ -62,9 +62,16 @@ Copy `custom_components/ninja_woodfire/` into your Home Assistant
 2. Sign in with your Ninja Kitchen account
 3. Pick your grill
 
-The four "advanced" fields in the form are optional and used only if
+The six "advanced" fields in the form are optional and used only if
 the bundled defaults stop working — see [Fallback: regenerating
 credentials](#fallback-regenerating-credentials) below.
+
+## SharkNinja AWS backend
+
+SharkNinja is moving grills from the Ayla cloud to its own AWS backend.
+Grills migrated by the Ninja app are detected automatically and read and
+controlled over AWS; Ayla is still used for setup and renaming. The
+*Cloud backend* diagnostic sensor shows which one is in use.
 
 ## Region
 

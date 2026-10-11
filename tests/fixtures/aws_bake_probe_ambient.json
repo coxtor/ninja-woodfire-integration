@@ -1,0 +1,17 @@
+{
+  "_note": "Bake at a 160 C setpoint with a meat probe plugged in and its tip in open room air. THE UNIT FIXTURE: this single snapshot carries the same probe measurement twice, in two different units. inputs.temps.probe1_a/b read 80 (Fahrenheit) while ProbeState.probes[0].temp reads 26.6 (Celsius), and 80 F = 26.67 C. That is what proves inputs.temps is a Fahrenheit block and ProbeState a Celsius one, without assuming anything about the room. Chamber air reads 302.7 F = 150.4 C against the 160 C setpoint; as Celsius it would be 302.7 C, which the appliance cannot reach.",
+  "_source": "captured from a real OG900-EU via the SharkNinja AWS telemetry endpoint (devicesEndUserController); identifiers scrubbed, firmware JSON byte-preserved",
+  "_transport": "aws",
+  "device": {
+    "oem_model": "OG900-EU",
+    "connected": true,
+    "updatedAt": "2026-09-01T17:30:31.470Z"
+  },
+  "telemetry": {
+    "RSSI": -64,
+    "CookState": "{\"id\":84,\"state\":{\"state\":\"heat\"}}",
+    "GrillState": "{\"id\":84,\"state\":\"cooking\",\"mode\":\"bake\",\"setpoint\":160,\"secondsset\":3000,\"endtimeutc\":1788285078,\"secondsleft\":1260,\"probesactive\":0,\"smoke\":0,\"error\":0,\"message\":\"\",\"eventmask\":\"0x00\",\"sim\":0,\"inputs\":{\"temps\":{\"grill\":278.2,\"air\":302.7,\"smoke\":272.8,\"probe0_a\":0,\"probe0_b\":0,\"probe1_a\":80,\"probe1_b\":80,\"main\":6542.4,\"ui\":6513.6,\"id\":84},\"io\":{\"lidopen\":0,\"id\":84},\"id\":84}}",
+    "ProbeState": "{\"probes\":[{\"name\":\"probe0\",\"pluggedin\":1,\"active\":0,\"temp\":26.6,\"progress\":100},{\"name\":\"probe1\",\"pluggedin\":0,\"active\":0,\"temp\":0,\"progress\":100}],\"id\":84}",
+    "OTA_Progress": ""
+  }
+}

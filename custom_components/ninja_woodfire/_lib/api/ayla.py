@@ -14,8 +14,6 @@ import aiohttp
 from ..const import (
     ALL_READ_PROPERTIES,
     CloudRegion,
-    COOK_MODES,
-    PROBE_MODES,
     PROP_COOK_STATE,
     PROP_GRILL_STATE,
     PROP_PROBE_STATE,
@@ -24,6 +22,7 @@ from ..const import (
 )
 from ..models import CombinedState, CookState, GrillState, ProbeState
 from .auth0 import Auth0Session
+from .commands import cook_command, stop_command
 from .errors import AuthError, NinjaCloudError, TransportError
 from .http import send
 
@@ -254,45 +253,23 @@ class AylaCloudClient:
             probe_1: optional probe-2 target dict.
             device_key: optional override; fetched via get_devices() if None.
         """
-        if mode not in COOK_MODES:
-            raise ValueError(f"unknown cook mode {mode!r}; expected one of {COOK_MODES}")
-        for label, p in (("probe_0", probe_0), ("probe_1", probe_1)):
-            if p is None:
-                continue
-            if p.get("mode") not in PROBE_MODES:
-                raise ValueError(
-                    f"{label}.mode {p.get('mode')!r} invalid; expected one of {PROBE_MODES}"
-                )
+        payload = cook_command(
+            mode=mode,
+            seconds=seconds,
+            temp=temp,
+            smoke=smoke,
+            skip_preheat=skip_preheat,
+            probe_0=probe_0,
+            probe_1=probe_1,
+        )
         if device_key is None:
             device_key = await self.get_device_key(dsn)
-
-        payload: dict[str, Any] = {
-            "id": device_key,
-            "mode": mode,
-            "seconds set": int(seconds),
-            "temp": int(temp),
-            "smoke": 1 if smoke else 0,
-            "skip preheat": 1 if skip_preheat else 0,
-        }
-        if probe_0 is not None:
-            payload["probe0"] = probe_0
-        if probe_1 is not None:
-            payload["probe1"] = probe_1
-
-        value = json.dumps(payload, separators=(",", ":"))
+        value = json.dumps({"id": device_key, **payload}, separators=(",", ":"))
         return await self.set_property_datapoint(dsn, PROP_SET_COOK, value)
 
     async def stop_cook(self, dsn: str) -> dict[str, Any]:
         """Stop the currently running cook."""
-        stop_payload = {
-            "id": 1000,
-            "mode": "grill",
-            "temp": 0,
-            "seconds set": 0,
-            "smoke": 0,
-            "skip preheat": 0,
-        }
-        value = json.dumps(stop_payload, separators=(",", ":"))
+        value = json.dumps(stop_command(), separators=(",", ":"))
         return await self.set_property_datapoint(dsn, PROP_SET_COOK, value)
 
     async def set_grill_name(self, dsn: str, new_name: str) -> dict[str, Any]:

@@ -1,0 +1,17 @@
+{
+  "_note": "Control panel off with the lid open, chamber still hot \u2014 AWS spells this state 'poweredOFF' (Ayla: 'powered OFF').",
+  "_source": "captured from a real OG900-EU via the SharkNinja AWS telemetry endpoint (devicesEndUserController); identifiers scrubbed, firmware JSON byte-preserved",
+  "_transport": "aws",
+  "device": {
+    "oem_model": "OG900-EU",
+    "connected": true,
+    "updatedAt": "2026-08-19T18:44:27.401Z"
+  },
+  "telemetry": {
+    "CookState": "{\"id\":41,\"state\":{\"state\":\"none\"}}",
+    "RSSI": -64,
+    "ProbeState": "{\"probes\":[{\"name\":\"probe0\",\"pluggedin\":0,\"active\":0,\"temp\":0,\"progress\":100},{\"name\":\"probe1\",\"pluggedin\":0,\"active\":0,\"temp\":0,\"progress\":100}],\"id\":41}",
+    "OTA_Progress": "",
+    "GrillState": "{\"id\":41,\"state\":\"poweredOFF\",\"message\":\"\",\"eventmask\":\"0x00\",\"sim\":0,\"inputs\":{\"temps\":{\"grill\":205.3,\"air\":236.6,\"smoke\":254.6,\"probe0_a\":0,\"probe0_b\":0,\"probe1_a\":0,\"probe1_b\":0,\"main\":6542.4,\"ui\":6513.6,\"id\":41},\"io\":{\"lidopen\":1,\"id\":41},\"id\":41}}"
+  }
+}

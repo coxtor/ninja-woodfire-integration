@@ -1,7 +1,8 @@
 import base64
 import json
 import time
-from unittest.mock import AsyncMock
+from pathlib import Path
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
@@ -25,6 +26,8 @@ from custom_components.ninja_woodfire.const import (
 from custom_components.ninja_woodfire.coordinator import NinjaWoodfireCoordinator
 
 pytest_plugins = ["pytest_homeassistant_custom_component"]
+
+FIXTURES = Path(__file__).parent / "fixtures"
 
 DOMAIN = "ninja_woodfire"
 DSN = "AC000W1"
@@ -106,3 +109,34 @@ def jwt(sub="auth0|user1", exp=None) -> str:
 
     claims = {"sub": sub, "exp": int(time.time()) + 3600 if exp is None else exp}
     return f"{part({'alg': 'RS256'})}.{part(claims)}.sig"
+
+
+def load_fixture(name):
+    return json.loads((FIXTURES / f"{name}.json").read_text())
+
+
+def aws_device(name="aws_cooking", connected=None, updated_at=None):
+    """An AWS device record for the configured grill, built from a capture."""
+    fx = load_fixture(name)
+    return {
+        "deviceId": "SND1",
+        "registry": {"serialNumber": "SND1", "WiFiModuleSerialNumber": f"{DSN}-SND1"},
+        "telemetry": fx["telemetry"],
+        "connectivityStatus": {
+            "connected": fx["device"]["connected"] if connected is None else connected
+        },
+        "updatedAt": updated_at or fx["device"]["updatedAt"],
+    }
+
+
+def mock_aws(device=None):
+    aws = AsyncMock()
+    aws.find_device = AsyncMock(return_value=device)
+    return aws
+
+
+async def setup_integration(hass, entry, client, aws=None):
+    with patch("custom_components.ninja_woodfire.AylaCloudClient", return_value=client), \
+         patch("custom_components.ninja_woodfire.AwsCloudClient", return_value=aws or mock_aws()):
+        await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()

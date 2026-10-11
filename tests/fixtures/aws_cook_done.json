@@ -1,0 +1,17 @@
+{
+  "_note": "Cook complete: signalled by message '6:done' + eventmask 0x40, while GrillState.state is still 'cooking'.",
+  "_source": "captured from a real OG900-EU via the SharkNinja AWS telemetry endpoint (devicesEndUserController); identifiers scrubbed, firmware JSON byte-preserved",
+  "_transport": "aws",
+  "device": {
+    "oem_model": "OG900-EU",
+    "connected": true,
+    "updatedAt": "2026-08-19T18:42:16.669Z"
+  },
+  "telemetry": {
+    "RSSI": -67,
+    "GrillState": "{\"id\":37,\"state\":\"cooking\",\"mode\":\"aircrisp\",\"setpoint\":150,\"secondsset\":60,\"endtimeutc\":1787164933,\"secondsleft\":0,\"probesactive\":0,\"smoke\":0,\"error\":0,\"message\":\"6:done\",\"eventmask\":\"0x40\",\"sim\":0,\"inputs\":{\"temps\":{\"grill\":212.5,\"air\":288.1,\"smoke\":258,\"probe0_a\":0,\"probe0_b\":0,\"probe1_a\":0,\"probe1_b\":0,\"main\":6542.4,\"ui\":6513.6,\"id\":37},\"io\":{\"lidopen\":0,\"id\":37},\"id\":37}}",
+    "ProbeState": "{\"probes\":[{\"name\":\"probe0\",\"pluggedin\":0,\"active\":0,\"temp\":0,\"progress\":100},{\"name\":\"probe1\",\"pluggedin\":0,\"active\":0,\"temp\":0,\"progress\":100}],\"id\":37}",
+    "CookState": "{\"id\":37,\"state\":{\"state\":\"none\"}}",
+    "OTA_Progress": ""
+  }
+}

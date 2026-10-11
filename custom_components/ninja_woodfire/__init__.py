@@ -8,11 +8,16 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-from ._lib.api.ayla import AuthError, AylaCloudClient, TransportError
+from ._lib.api.auth0 import Auth0Session
+from ._lib.api.aws import AwsCloudClient
+from ._lib.api.ayla import AylaCloudClient
+from ._lib.api.errors import AuthError, TransportError
 from ._lib.capabilities import for_oem_model
 from ._lib.const import make_region
 
 from .const import (
+    CONF_AWS_API_BASE,
+    CONF_AWS_API_KEY,
     CONF_AUTH0_AUDIENCE,
     CONF_AUTH0_CLIENT_ID,
     CONF_AYLA_APP_ID,
@@ -45,13 +50,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: NinjaWoodfireConfigEntry
         auth0_client_id=entry.data.get(CONF_AUTH0_CLIENT_ID),
         ayla_app_id=entry.data.get(CONF_AYLA_APP_ID),
         ayla_app_secret=entry.data.get(CONF_AYLA_APP_SECRET),
+        aws_rest_base=entry.data.get(CONF_AWS_API_BASE),
+        aws_api_key=entry.data.get(CONF_AWS_API_KEY),
     )
+    http = async_get_clientsession(hass)
+    auth = Auth0Session(entry.data[CONF_EMAIL], entry.data[CONF_PASSWORD], region)
 
     client = AylaCloudClient(
         email=entry.data[CONF_EMAIL],
         password=entry.data[CONF_PASSWORD],
         region=region,
-        session=async_get_clientsession(hass),
+        session=http,
+        auth=auth,
     )
 
     try:
@@ -78,6 +88,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: NinjaWoodfireConfigEntry
         dsn=dsn,
         capabilities=capabilities,
         device_key=device_key,
+        aws=AwsCloudClient(auth, region, http),
         device_info_extra={
             "oem_model": str(device.get("oem_model", "")),
             "model": str(device.get("model", "")),

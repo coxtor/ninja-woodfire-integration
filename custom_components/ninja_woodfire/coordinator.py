@@ -12,7 +12,10 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
-from ._lib.api.ayla import AuthError, AylaCloudClient, NinjaCloudError, TransportError
+from ._lib.api import GrillTransport
+from ._lib.api.aws import AwsCloudClient, state_from_device
+from ._lib.api.ayla import AylaCloudClient
+from ._lib.api.errors import AuthError, NinjaCloudError, TransportError
 from ._lib.capabilities import GrillCapabilities, grill_level
 from ._lib.models import CombinedState
 
@@ -67,6 +70,7 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
         capabilities: GrillCapabilities,
         device_key: int,
         device_info_extra: dict[str, str] | None = None,
+        aws: AwsCloudClient | None = None,
     ) -> None:
         super().__init__(
             hass,
@@ -75,7 +79,12 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
             name=f"{DOMAIN} {dsn}",
             update_interval=DEFAULT_SCAN_INTERVAL,
         )
+        # Ayla stays in use for setup and rename; state and cooks go through
+        # `transport`, which switches to AWS once the grill is found live there.
         self.client = client
+        self.aws = aws
+        self.transport: GrillTransport = client
+        self._aws_checked = False
         self.dsn = dsn
         self.capabilities = capabilities
         self._device_key = device_key
@@ -105,7 +114,9 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
 
     async def _async_update_data(self) -> CombinedState:
         try:
-            state = await self.client.get_combined_state(self.dsn)
+            state = await self.transport.get_combined_state(self.dsn)
+            if self.aws is not None and not self._aws_checked:
+                state = await self._try_aws(state)
         except AuthError as err:
             raise ConfigEntryAuthFailed(str(err)) from err
         except TransportError as err:
@@ -122,6 +133,30 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
             self._emit_lifecycle_events(state)
         else:
             self._prev_grill_state = None
+        return state
+
+    @property
+    def backend(self) -> str:
+        return "ayla" if self.transport is self.client else "aws"
+
+    async def _try_aws(self, ayla: CombinedState) -> CombinedState:
+        """Switch to AWS if the grill reports there more recently than to Ayla."""
+        self._aws_checked = True
+        try:
+            device = await self.aws.find_device(self.dsn)
+        except TransportError as err:
+            _LOGGER.info("SharkNinja AWS backend unavailable (%s); using Ayla", err)
+            return ayla
+        if device is None:
+            return ayla
+        state = state_from_device(self.dsn, device)
+        newer = state.last_updated_at is not None and (
+            ayla.last_updated_at is None or state.last_updated_at > ayla.last_updated_at
+        )
+        if not state.online and not newer:
+            return ayla
+        _LOGGER.info("Grill %s is on SharkNinja's AWS backend; using it", self.dsn)
+        self.transport = self.aws
         return state
 
     def _track_connection(self, state: CombinedState) -> None:
@@ -374,7 +409,7 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
         ]
         temp = max(mode.temp_min, min(mode.temp_max, self.cook_setting_temp))
         seconds = max(mode.duration_min_s, min(mode.duration_max_s, self.cook_setting_seconds))
-        await self._command(self.client.start_cook(
+        await self._command(self.transport.start_cook(
             self.dsn,
             mode=mode.name,
             seconds=seconds,
@@ -389,7 +424,7 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
         await self._burst_refresh()
 
     async def async_stop_cook(self) -> None:
-        await self._command(self.client.stop_cook(self.dsn))
+        await self._command(self.transport.stop_cook(self.dsn))
         self._issued_level = None
         self._seconds_override = None
         await self._burst_refresh()
@@ -513,7 +548,7 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
                 payloads = [None, None]
         new_seconds = max(_MIN_REMAINING_S, new_seconds)
 
-        await self._command(self.client.start_cook(
+        await self._command(self.transport.start_cook(
             self.dsn,
             mode=new_mode,
             seconds=int(new_seconds),

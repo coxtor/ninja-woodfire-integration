@@ -364,6 +364,12 @@ DIAGNOSTICS: tuple[NinjaDiagnosticDescription, ...] = (
         info_key="dsn",
         icon="mdi:identifier",
     ),
+    NinjaDiagnosticDescription(
+        key="cloud_backend",
+        translation_key="cloud_backend",
+        info_key="backend",
+        icon="mdi:cloud",
+    ),
 )
 
 
@@ -428,6 +434,6 @@ class NinjaDiagnosticSensor(NinjaWoodfireEntity, SensorEntity):
 
     @property
     def native_value(self) -> Any:
-        if self._info_key == "dsn":
-            return self.coordinator.dsn
+        if self._info_key in ("dsn", "backend"):
+            return getattr(self.coordinator, self._info_key)
         return self.coordinator.device_info_extra.get(self._info_key) or None

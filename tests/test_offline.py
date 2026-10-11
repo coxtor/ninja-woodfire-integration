@@ -2,7 +2,7 @@ import json
 import logging
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -18,7 +18,7 @@ from custom_components.ninja_woodfire.number import CookTempNumber
 from custom_components.ninja_woodfire.sensor import _plausible_probe_temp
 from custom_components.ninja_woodfire.switch import _maybe_skip_preheat_now
 
-from .conftest import DEVICE, DSN, cooking, mk_state, probe
+from .conftest import DEVICE, DSN, cooking, mk_state, probe, setup_integration
 
 FIXTURES = Path(__file__).parent / "fixtures"
 BASE = "https://ads-eu.aylanetworks.com/apiv1/dsns/X"
@@ -232,7 +232,7 @@ async def test_number_set_while_offline_only_stages(coordinator):
 STAYS_AVAILABLE = {
     "cook_duration", "cook_temp", "probe0_target_temp", "probe1_target_temp",
     "cook_mode", "cook_smoke", "cook_skip_preheat", "probe0_enabled", "probe1_enabled",
-    "firmware_version", "oem_model", "dsn", "stop_cook", "cloud_connected",
+    "firmware_version", "oem_model", "dsn", "stop_cook", "cloud_connected", "cloud_backend",
 }
 
 
@@ -240,9 +240,7 @@ async def _setup(hass, entry, state):
     client = AsyncMock()
     client.get_devices = AsyncMock(return_value=[DEVICE])
     client.get_combined_state = AsyncMock(return_value=state)
-    with patch("custom_components.ninja_woodfire.AylaCloudClient", return_value=client):
-        await hass.config_entries.async_setup(entry.entry_id)
-        await hass.async_block_till_done()
+    await setup_integration(hass, entry, client)
 
 
 def _available_keys(hass):

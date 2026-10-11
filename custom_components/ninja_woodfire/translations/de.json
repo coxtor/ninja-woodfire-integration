@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "Ninja Woodfire",
-        "description": "Mit deinem Ninja-Kitchen-Account anmelden. Die vier erweiterten Felder leer lassen — sie sind nur ein Fallback falls die mitgelieferten Defaults nicht mehr funktionieren. Anleitung zum selbst-Extrahieren in der Projekt-README.",
+        "description": "Mit deinem Ninja-Kitchen-Account anmelden. Die sechs erweiterten Felder leer lassen — sie sind nur ein Fallback falls die mitgelieferten Defaults nicht mehr funktionieren. Anleitung zum selbst-Extrahieren in der Projekt-README.",
         "data": {
           "email": "E-Mail",
           "password": "Passwort",
@@ -11,7 +11,9 @@
           "auth0_audience": "Auth0 Audience (optional)",
           "auth0_client_id": "Auth0 Client-ID (optional)",
           "ayla_app_id": "Cloud-App-ID (optional)",
-          "ayla_app_secret": "Cloud-App-Secret (optional)"
+          "ayla_app_secret": "Cloud-App-Secret (optional)",
+          "aws_api_base": "AWS-API-Basis-URL (optional)",
+          "aws_api_key": "AWS-API-Schlüssel (optional)"
         }
       },
       "reauth_confirm": {
@@ -65,7 +67,8 @@
       "message": { "name": "Nachricht" },
       "firmware_version": { "name": "Firmware-Version" },
       "oem_model": { "name": "Modell" },
-      "dsn": { "name": "Geräte-Seriennr. (DSN)" }
+      "dsn": { "name": "Geräte-Seriennr. (DSN)" },
+      "cloud_backend": { "name": "Cloud-Backend" }
     },
     "binary_sensor": {
       "lid_open": { "name": "Deckel" },

@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "Ninja Woodfire",
-        "description": "Sign in with your Ninja Kitchen account. Leave the four advanced fields below empty unless the bundled defaults stop working — see the project README for the extractor script if you need to override them.",
+        "description": "Sign in with your Ninja Kitchen account. Leave the six advanced fields below empty unless the bundled defaults stop working — see the project README for the extractor script if you need to override them.",
         "data": {
           "email": "Email",
           "password": "Password",
@@ -11,7 +11,9 @@
           "auth0_audience": "Auth0 audience (optional)",
           "auth0_client_id": "Auth0 client ID (optional)",
           "ayla_app_id": "Cloud app ID (optional)",
-          "ayla_app_secret": "Cloud app secret (optional)"
+          "ayla_app_secret": "Cloud app secret (optional)",
+          "aws_api_base": "AWS API base URL (optional)",
+          "aws_api_key": "AWS API key (optional)"
         }
       },
       "reauth_confirm": {
@@ -65,7 +67,8 @@
       "message": { "name": "Message" },
       "firmware_version": { "name": "Firmware version" },
       "oem_model": { "name": "Model" },
-      "dsn": { "name": "Device serial (DSN)" }
+      "dsn": { "name": "Device serial (DSN)" },
+      "cloud_backend": { "name": "Cloud backend" }
     },
     "binary_sensor": {
       "lid_open": { "name": "Lid" },

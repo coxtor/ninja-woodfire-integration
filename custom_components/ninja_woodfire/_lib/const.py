@@ -16,6 +16,8 @@ class CloudRegion:
     ayla_device_base: str
     ayla_app_id: str
     ayla_app_secret: str
+    aws_rest_base: str
+    aws_api_key: str
 
 
 # Per-region defaults. Credentials below are the same identifiers the
@@ -35,6 +37,8 @@ REGION_EU_DEFAULTS = dict(
     ayla_device_base="https://ads-eu.aylanetworks.com",
     ayla_app_id="android_ninjakitchen_prod-PQ-id",
     ayla_app_secret="android_ninjakitchen_prod-k8MHvn6qaNqafn4UNKu9OjR_Epc",
+    aws_rest_base="https://stakra.rannsaka.thor.skegox.com",
+    aws_api_key="T5m8d45crZDV9I5aCEZr4n2gSqJW64r2RNXqqhh1",
 )
 
 REGION_NA_DEFAULTS = dict(
@@ -46,6 +50,9 @@ REGION_NA_DEFAULTS = dict(
     ayla_device_base="https://ads-field-39a9391a.aylanetworks.com",
     ayla_app_id="android_ninjakitchen_prod-gg-id",
     ayla_app_secret="android_ninjakitchen_prod-b85m9QC9-Pp-pTAWhoaJSzt-EhI",
+    # Only the EU AWS deployment has been observed; NA reuses it unverified.
+    aws_rest_base=REGION_EU_DEFAULTS["aws_rest_base"],
+    aws_api_key=REGION_EU_DEFAULTS["aws_api_key"],
 )
 
 REGION_DEFAULTS: dict[str, dict[str, str]] = {
@@ -61,6 +68,8 @@ def make_region(
     auth0_client_id: str | None = None,
     ayla_app_id: str | None = None,
     ayla_app_secret: str | None = None,
+    aws_rest_base: str | None = None,
+    aws_api_key: str | None = None,
 ) -> CloudRegion:
     """Build a CloudRegion. Each credential falls back to the bundled
     default when not provided — user-supplied values take precedence."""
@@ -74,6 +83,8 @@ def make_region(
         ayla_device_base=base["ayla_device_base"],
         ayla_app_id=ayla_app_id or base["ayla_app_id"],
         ayla_app_secret=ayla_app_secret or base["ayla_app_secret"],
+        aws_rest_base=aws_rest_base or base["aws_rest_base"],
+        aws_api_key=aws_api_key or base["aws_api_key"],
     )
 
 # Property names used by the cloud API.

@@ -6,7 +6,7 @@ from homeassistant.data_entry_flow import FlowResultType
 
 from custom_components.ninja_woodfire._lib.api.ayla import AuthError, TransportError
 
-from .conftest import DEVICE, DOMAIN, DSN, mk_state
+from .conftest import DEVICE, DOMAIN, DSN, mk_state, setup_integration
 
 
 def _client(**overrides):
@@ -19,9 +19,7 @@ def _client(**overrides):
 
 
 async def _setup(hass, entry, client):
-    with patch("custom_components.ninja_woodfire.AylaCloudClient", return_value=client):
-        await hass.config_entries.async_setup(entry.entry_id)
-        await hass.async_block_till_done()
+    await setup_integration(hass, entry, client)
 
 
 async def test_setup_and_unload(hass, entry):
