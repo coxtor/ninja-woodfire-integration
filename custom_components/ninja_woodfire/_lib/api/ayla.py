@@ -23,24 +23,14 @@ from ..const import (
     make_region,
 )
 from ..models import CombinedState, CookState, GrillState, ProbeState
+from .auth0 import Auth0Session
+from .errors import AuthError, NinjaCloudError, TransportError
+from .http import send
 
 _LOGGER = logging.getLogger(__name__)
 
-_TIMEOUT = aiohttp.ClientTimeout(total=20)
 _DEVICE_CACHE_S = 30
 _DEVICE_CACHE_MAX_S = 300
-
-
-class NinjaCloudError(Exception):
-    """Base exception."""
-
-
-class AuthError(NinjaCloudError):
-    """Bad credentials or expired session."""
-
-
-class TransportError(NinjaCloudError):
-    """Network / 5xx / unexpected payload."""
 
 
 @dataclass
@@ -59,15 +49,14 @@ class AylaCloudClient:
         password: str,
         region: CloudRegion | None = None,
         session: aiohttp.ClientSession | None = None,
+        auth: Auth0Session | None = None,
     ) -> None:
-        self._email = email
-        self._password = password
         # Default to EU region using bundled credentials when no
         # explicit region is provided.
         self._region = region if region is not None else make_region("EU")
+        self._auth = auth or Auth0Session(email, password, self._region)
         self._http = session
         self._owns_session = session is None
-        self._auth0_id_token: str | None = None
         self._ayla: AylaSession | None = None
         self._lock = asyncio.Lock()
         self._devices: dict[str, tuple[float, dict[str, Any]]] = {}
@@ -90,33 +79,9 @@ class AylaCloudClient:
             await self._login()
 
     async def _login(self) -> None:
-        await self._auth0_password_grant()
-        await self._ayla_token_sign_in()
-
-    async def _auth0_password_grant(self) -> None:
-        url = f"{self._region.auth0_base}/oauth/token"
-        body = {
-            "grant_type": "http://auth0.com/oauth/grant-type/password-realm",
-            "username": self._email,
-            "password": self._password,
-            "audience": self._region.auth0_audience,
-            "scope": "openid profile email read:current_user offline_access",
-            "client_id": self._region.auth0_client_id,
-            "realm": "Username-Password-Authentication",
-        }
-        status, data = await self._send("POST", url, json=body)
-        if status in (401, 403):
-            raise AuthError(f"Auth0 rejected credentials: {data}")
-        if status != 200 or not isinstance(data, dict):
-            raise TransportError(f"Auth0 {status}: {data}")
-        self._auth0_id_token = data.get("id_token")
-        if not self._auth0_id_token:
-            raise TransportError("Auth0 returned no id_token")
-
-    async def _ayla_token_sign_in(self) -> None:
         url = f"{self._region.ayla_user_base}/api/v1/token_sign_in"
         body = {
-            "token": self._auth0_id_token,
+            "token": await self._auth.id_token(self._client()),
             "app_id": self._region.ayla_app_id,
             "app_secret": self._region.ayla_app_secret,
         }
@@ -157,15 +122,7 @@ class AylaCloudClient:
     # ------------------------------------------------------------------ http
 
     async def _send(self, method: str, url: str, **kwargs: Any) -> tuple[int, Any]:
-        try:
-            async with self._client().request(
-                method, url, timeout=_TIMEOUT, **kwargs
-            ) as r:
-                if r.status in (200, 201):
-                    return r.status, await r.json(content_type=None)
-                return r.status, await r.text()
-        except (aiohttp.ClientError, TimeoutError, ValueError) as err:
-            raise TransportError(f"{method} {url}: {err!r}") from err
+        return await send(self._client(), method, url, **kwargs)
 
     async def _api(self, method: str, url: str, **kwargs: Any) -> Any:
         """Authenticated request; re-authenticates once on 401."""

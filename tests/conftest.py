@@ -1,3 +1,4 @@
+import base64
 import json
 import time
 from unittest.mock import AsyncMock
@@ -97,3 +98,11 @@ def events(hass):
                EVENT_PROBE_HALFWAY, EVENT_PROBE_TARGET_REACHED):
         hass.bus.async_listen(ev, lambda e: seen.append(e.event_type))
     return seen
+
+
+def jwt(sub="auth0|user1", exp=None) -> str:
+    def part(obj):
+        return base64.urlsafe_b64encode(json.dumps(obj).encode()).rstrip(b"=").decode()
+
+    claims = {"sub": sub, "exp": int(time.time()) + 3600 if exp is None else exp}
+    return f"{part({'alg': 'RS256'})}.{part(claims)}.sig"
