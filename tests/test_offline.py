@@ -11,7 +11,7 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-from custom_components.ninja_woodfire._lib.api.ayla import AylaCloudClient, AylaSession
+from custom_components.ninja_woodfire._lib.api.ayla import AylaCloudClient, AylaSession, TransportError
 from custom_components.ninja_woodfire._lib.models import CombinedState, GrillState
 from custom_components.ninja_woodfire.const import SCAN_INTERVAL_IDLE
 from custom_components.ninja_woodfire.number import CookTempNumber
@@ -119,6 +119,19 @@ async def test_failed_device_refresh_keeps_previous_record(hass, aioclient_mock,
     assert _device_calls(aioclient_mock) == 1
     assert state.online is False
     assert state.connection_status == "Offline"
+
+
+async def test_failed_device_refresh_drops_record_after_five_minutes(hass, aioclient_mock, freezer):
+    _serve(aioclient_mock, "idle_offline")
+    client = _client(hass)
+    await client.get_combined_state("X")
+    aioclient_mock.clear_requests()
+    _serve(aioclient_mock, "idle_offline", device=False)
+    aioclient_mock.get(DEVICE_URL, status=500)
+    freezer.tick(301)
+    state = await client.get_combined_state("X")
+    assert state.online is True
+    assert state.connection_status is None
 
 
 # ---------------------------------------------------------------- plausibility
@@ -251,7 +264,7 @@ async def test_offline_grill_entities_unavailable(hass, entry):
     conn = hass.states.get(eid)
     assert conn.state == "off"
     assert conn.attributes["connection_status"] == "Offline"
-    assert conn.attributes["last_report_age_seconds"] >= 22 * 3600
+    assert "last_report_age_seconds" not in conn.attributes
 
 
 async def test_online_grill_offers_start_and_cloud_connected(hass, entry):
@@ -260,3 +273,15 @@ async def test_online_grill_offers_start_and_cloud_connected(hass, entry):
     await _setup(hass, entry, state)
     keys = _available_keys(hass)
     assert {"start_cook", "skip_preheat", "grill_state", "cloud_connected"} <= keys
+
+
+async def test_stop_stays_available_after_failed_poll(hass, entry):
+    await _setup(hass, entry, mk_state())
+    coordinator = entry.runtime_data
+    coordinator.client.get_combined_state.side_effect = TransportError("boom")
+    await coordinator.async_refresh()
+    await hass.async_block_till_done()
+    assert coordinator.last_update_success is False
+    keys = _available_keys(hass)
+    assert "stop_cook" in keys
+    assert "start_cook" not in keys

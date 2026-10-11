@@ -28,6 +28,7 @@ _LOGGER = logging.getLogger(__name__)
 
 _TIMEOUT = aiohttp.ClientTimeout(total=20)
 _DEVICE_CACHE_S = 30
+_DEVICE_CACHE_MAX_S = 300
 
 
 class NinjaCloudError(Exception):
@@ -203,7 +204,10 @@ class AylaCloudClient:
         try:
             device = await self.get_device(dsn)
         except TransportError:
-            return cached[1] if cached else None
+            if cached and time.monotonic() - cached[0] < _DEVICE_CACHE_MAX_S:
+                return cached[1]
+            self._devices.pop(dsn, None)
+            return None
         self._devices[dsn] = (time.monotonic(), device)
         return device
 

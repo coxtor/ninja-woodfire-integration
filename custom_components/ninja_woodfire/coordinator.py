@@ -27,6 +27,7 @@ from .const import (
     EVENT_PREHEAT_COMPLETE,
     EVENT_PROBE_HALFWAY,
     EVENT_PROBE_TARGET_REACHED,
+    IDLE_STATES,
     PAUSED_STATES,
     PREHEAT_STATES,
     REST_STATES,
@@ -235,7 +236,7 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
                 {**common, "seconds_left": grill.seconds_left, "seconds_set": grill.seconds_set},
             )
 
-        if (g == "done" and prev != "done") or (prev in ACTIVE_STATES and g == "idle"):
+        if (g == "done" and prev != "done") or (prev in ACTIVE_STATES and g.casefold() in IDLE_STATES):
             fire(EVENT_COOK_DONE, {**common, "reason": "done" if g == "done" else "stopped"})
             self._reset_cook_flags()
 

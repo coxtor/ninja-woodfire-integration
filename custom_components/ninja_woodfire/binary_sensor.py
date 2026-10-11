@@ -62,12 +62,7 @@ BINARY_SENSORS: tuple[NinjaBinarySensorDescription, ...] = (
         device_class=BinarySensorDeviceClass.CONNECTIVITY,
         entity_category=EntityCategory.DIAGNOSTIC,
         value_fn=lambda s: s.online,
-        attrs_fn=lambda s: {
-            "connection_status": s.connection_status,
-            "last_report_age_seconds": (
-                None if (age := s.state_age_seconds()) is None else int(age)
-            ),
-        },
+        attrs_fn=lambda s: {"connection_status": s.connection_status},
         requires_live_state=False,
     ),
 )

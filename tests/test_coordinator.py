@@ -6,6 +6,7 @@ import pytest
 from homeassistant.exceptions import HomeAssistantError
 
 from custom_components.ninja_woodfire.const import (
+    EVENT_COOK_DONE,
     EVENT_COOK_HALFTIME,
     EVENT_COOK_STARTED,
     EVENT_PREHEAT_COMPLETE,
@@ -183,6 +184,12 @@ async def test_first_poll_after_restart_fires_nothing(hass, coordinator, events)
     mid_cook = mk_state(cooking(left=100, total=1800), probes={"probes": [probe(temp=80, setpoint=74)]})
     await _feed(hass, coordinator, mid_cook, mid_cook)
     assert events == []
+
+
+async def test_power_off_after_cook_fires_done_once(hass, coordinator, events):
+    off = mk_state({"state": "powered OFF"})
+    await _feed(hass, coordinator, mk_state(), mk_state(cooking()), off, off)
+    assert events.count(EVENT_COOK_DONE) == 1
 
 
 async def test_probe_halfway_measured_from_start_temp(hass, coordinator, events):

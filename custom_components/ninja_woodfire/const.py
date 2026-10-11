@@ -6,6 +6,7 @@ from datetime import timedelta
 from ._lib.const import (  # noqa: F401
     ACTIVE_STATES,
     COOKING_STATES,
+    IDLE_STATES,
     PAUSED_STATES,
     PREHEAT_STATES,
     REST_STATES,
