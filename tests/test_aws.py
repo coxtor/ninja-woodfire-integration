@@ -528,3 +528,7 @@ async def test_404_from_the_device_list_re_resolves_the_household(hass, aioclien
     _replies(aioclient_mock, DEVICES, "get", [404, {"items": [aws_device()]}])
     assert (await _client(hass).find_device(DSN))["deviceId"] == "SND1"
     assert len(_calls(aioclient_mock, HOUSEHOLDS)) == 2
+
+
+def test_waiting_for_lid_state_is_mapped_back():
+    assert normalise({"state": "waitlidclosedbeforecook"}) == {"state": "wait lid closed before cook"}

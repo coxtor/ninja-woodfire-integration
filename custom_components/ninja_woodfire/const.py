@@ -10,6 +10,7 @@ from ._lib.const import (  # noqa: F401
     PAUSED_STATES,
     PREHEAT_STATES,
     REST_STATES,
+    WAITING_STATES,
 )
 
 DOMAIN = "ninja_woodfire"
@@ -39,3 +40,4 @@ EVENT_COOK_HALFTIME = "ninja_woodfire_cook_halftime"
 EVENT_COOK_DONE = "ninja_woodfire_cook_done"
 EVENT_PROBE_TARGET_REACHED = "ninja_woodfire_probe_target_reached"
 EVENT_PROBE_HALFWAY = "ninja_woodfire_probe_halfway"
+EVENT_PROMPT = "ninja_woodfire_prompt"

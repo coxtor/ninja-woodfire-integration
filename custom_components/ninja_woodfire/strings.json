@@ -64,6 +64,10 @@
       "probe0_state": { "name": "Probe 1 state" },
       "probe1_state": { "name": "Probe 2 state" },
       "event_mask": { "name": "Event mask" },
+      "prompt": {
+        "name": "Prompt",
+        "state": { "addfood": "Add food", "flipfood": "Flip food", "done": "Done", "getfood": "Get food" }
+      },
       "message": { "name": "Message" },
       "firmware_version": { "name": "Firmware version" },
       "oem_model": { "name": "Model" },

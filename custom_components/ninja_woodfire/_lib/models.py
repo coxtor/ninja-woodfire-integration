@@ -16,7 +16,7 @@ import math
 from dataclasses import dataclass, field
 from typing import Any
 
-from .const import ACTIVE_STATES, IDLE_STATES
+from .const import ACTIVE_STATES, IDLE_STATES, PREHEAT_STATES
 
 
 def _parse_value(raw: Any) -> dict[str, Any]:
@@ -35,6 +35,11 @@ def _float(value: Any, default: float | None = 0.0) -> float | None:
     except (TypeError, ValueError):
         return default
     return f if math.isfinite(f) else default
+
+
+def _prompt(message: Any) -> str | None:
+    name = str(message or "").rpartition(":")[2].strip().lower()
+    return name or None
 
 
 def _int(value: Any, default: int | None = None) -> int | None:
@@ -99,6 +104,7 @@ class GrillState:
     state: str = "unknown"           # idle | preheat | cooking | rest | done | …
     message: str = ""
     event_mask: str = ""
+    prompt: str | None = None        # addfood | flipfood | done | getfood, from "<bit>:<name>"
     lid_open: bool = False
     sim: int = 0
     temps: GrillTemps = field(default_factory=GrillTemps)
@@ -123,6 +129,7 @@ class GrillState:
         return cls(
             state=str(d.get("state", "unknown")),
             message=str(d.get("message", "")),
+            prompt=_prompt(d.get("message")),
             event_mask=str(d.get("eventmask", "")),
             lid_open=bool(io.get("lid open", 0)),
             sim=_int(d.get("sim"), 0),
@@ -273,6 +280,22 @@ class CombinedState:
     last_updated_at: Any = None  # datetime | None at runtime
     # Wi-Fi signal in dBm; only the AWS telemetry reports it.
     rssi: int | None = None
+
+    @property
+    def preheating(self) -> bool:
+        """Whether the grill is still preheating.
+
+        The firmware keeps CookState at preheat/100 until the add-food prompt is
+        acknowledged by opening the lid, while the cook timer already runs.
+        """
+        g, c = self.grill, self.cook
+        if g.prompt == "addfood":
+            return False
+        if g.state in PREHEAT_STATES:
+            return True
+        if c.state not in PREHEAT_STATES or (c.progress is not None and c.progress >= 100):
+            return False
+        return not (g.seconds_set and g.seconds_left and g.seconds_left < g.seconds_set - 10)
 
     def state_age_seconds(self) -> float | None:
         """Seconds since the grill last reported, or None if unknown."""

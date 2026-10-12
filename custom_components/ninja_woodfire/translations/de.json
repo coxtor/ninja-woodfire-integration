@@ -64,6 +64,10 @@
       "probe0_state": { "name": "Sonde 1 Status" },
       "probe1_state": { "name": "Sonde 2 Status" },
       "event_mask": { "name": "Event-Maske" },
+      "prompt": {
+        "name": "Hinweis",
+        "state": { "addfood": "Lebensmittel hinzufügen", "flipfood": "Lebensmittel wenden", "done": "Fertig", "getfood": "Lebensmittel herausnehmen" }
+      },
       "message": { "name": "Nachricht" },
       "firmware_version": { "name": "Firmware-Version" },
       "oem_model": { "name": "Modell" },

@@ -37,6 +37,10 @@ For a custom Lovelace card, see [ninja-woodfire-card](https://github.com/coxtor/
   - `ninja_woodfire_probe_halfway` (halfway from the probe's start
     temperature to its target)
   - `ninja_woodfire_probe_target_reached`
+  - `ninja_woodfire_prompt` — the grill asks for something (`prompt`:
+    `addfood`, `flipfood`, `done`, `getfood`); also exposed as the *Prompt*
+    sensor. *Add food* is acknowledged on the grill by opening and closing
+    the lid; there is no remote command for it.
 
 ## Tested models
 

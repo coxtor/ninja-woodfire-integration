@@ -50,6 +50,7 @@ _VALUES = {
         "getfood": "get food",
         "lidopen": "lid open",
         "zcloss": "zc loss",
+        "waitlidclosedbeforecook": "wait lid closed before cook",
     },
 }
 

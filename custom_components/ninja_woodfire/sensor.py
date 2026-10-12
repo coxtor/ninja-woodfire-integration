@@ -28,6 +28,8 @@ from ._lib.models import CombinedState
 
 from .const import COOKING_STATES, PAUSED_STATES, PREHEAT_STATES, REST_STATES
 
+PROMPTS = ("addfood", "flipfood", "done", "getfood")
+
 from .coordinator import NinjaWoodfireConfigEntry, NinjaWoodfireCoordinator
 from .entity import NinjaWoodfireEntity
 
@@ -54,8 +56,10 @@ def _cook_phase(state: CombinedState) -> str:
     """Sub-phase of the cook: preheat | cooking | rest | none."""
     g = state.grill.state
     c = state.cook.state
-    if g in PREHEAT_STATES or c in PREHEAT_STATES:
+    if state.preheating:
         return "preheat"
+    if g in PREHEAT_STATES or c in PREHEAT_STATES:
+        return "cooking"
     if g in REST_STATES or c in REST_STATES:
         return "rest"
     if g in COOKING_STATES | PAUSED_STATES or c in COOKING_STATES | PAUSED_STATES:
@@ -261,6 +265,14 @@ SENSORS: tuple[NinjaSensorDescription, ...] = (
         translation_key="event_mask",
         entity_category=EntityCategory.DIAGNOSTIC,
         value_fn=lambda s: s.grill.event_mask,
+    ),
+    NinjaSensorDescription(
+        key="prompt",
+        translation_key="prompt",
+        device_class=SensorDeviceClass.ENUM,
+        options=list(PROMPTS),
+        icon="mdi:message-alert",
+        value_fn=lambda s: s.grill.prompt if s.grill.prompt in PROMPTS else None,
     ),
     NinjaSensorDescription(
         key="message",

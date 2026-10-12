@@ -30,12 +30,13 @@ from .const import (
     EVENT_COOK_HALFTIME,
     EVENT_COOK_STARTED,
     EVENT_PREHEAT_COMPLETE,
+    EVENT_PROMPT,
     EVENT_PROBE_HALFWAY,
     EVENT_PROBE_TARGET_REACHED,
     IDLE_STATES,
     PAUSED_STATES,
-    PREHEAT_STATES,
     REST_STATES,
+    WAITING_STATES,
     SCAN_INTERVAL_ACTIVE,
     SCAN_INTERVAL_IDLE,
 )
@@ -59,7 +60,7 @@ def is_active(state: CombinedState) -> bool:
 
 
 def is_preheating(state: CombinedState) -> bool:
-    return state.grill.state in PREHEAT_STATES or state.cook.state in PREHEAT_STATES
+    return state.preheating
 
 
 class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
@@ -115,6 +116,8 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
         self._seconds_override: tuple[int, int] | None = None
         # Lifecycle-event tracking.
         self._prev_grill_state: str | None = None
+        self._prev_prompt: str | None = None
+        self._new_cook = False
         self._reset_cook_flags()
         self._offline_logged = False
         # Poll health, for the cloud diagnostic entities.
@@ -277,6 +280,7 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
         prev = self._prev_grill_state
         self._prev_grill_state = g
         if prev is None:
+            self._prev_prompt = state.grill.prompt
             self._seed_cook_flags(state)
             return
 
@@ -285,7 +289,8 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
         common = {"dsn": self.dsn, "mode": grill.mode, "setpoint": grill.setpoint}
         active = g in ACTIVE_STATES
 
-        if active and prev not in ACTIVE_STATES:
+        if active and (prev not in ACTIVE_STATES or self._new_cook):
+            self._new_cook = False
             self._reset_cook_flags()
             fire(EVENT_COOK_STARTED, {**common, "seconds_set": grill.seconds_set, "smoke": grill.smoke})
 
@@ -315,9 +320,14 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
                 {**common, "seconds_left": grill.seconds_left, "seconds_set": grill.seconds_set},
             )
 
-        if (g == "done" and prev != "done") or (prev in ACTIVE_STATES and g.casefold() in IDLE_STATES):
+        if (g == "done" and prev != "done") or (prev in ACTIVE_STATES and g.casefold() in IDLE_STATES | WAITING_STATES):
             fire(EVENT_COOK_DONE, {**common, "reason": "done" if g == "done" else "stopped"})
             self._reset_cook_flags()
+
+        prompt = grill.prompt
+        if prompt and prompt != self._prev_prompt:
+            fire(EVENT_PROMPT, {**common, "prompt": prompt})
+        self._prev_prompt = prompt
 
         if not active:
             return
@@ -465,6 +475,7 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
             device_key=self._device_key,
         ))
         self._remember_issue(mode.name, temp, seconds, seconds)
+        self._new_cook = True
         await self._burst_refresh()
 
     async def async_stop_cook(self) -> None:
