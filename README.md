@@ -14,6 +14,11 @@ Home Assistant — **fully local over Bluetooth**, or over the Ninja cloud.
 > Hobby project, published as-is — no support, no warranty. Primarily a
 > Claude-assisted project.
 
+Developed against the `OG900-EU`, the only unit the author owns. Other Ninja
+Woodfire models likely speak the same protocol and could be supported with small
+tweaks — they're just untested here for lack of the hardware. **Pull requests
+adding other models are very welcome.**
+
 ## Two ways to connect
 
 Chosen in the setup wizard:
@@ -75,21 +80,25 @@ python3 scripts/extract_ninja_keys.py --app your-ninja-app.apkm
 ```
 
 Power the grill on and keep it in range — if it's the only Woodfire nearby the
-tool finds it automatically and prints a single key-bundle string. It pulls the
-library out of the package, finds the key routine inside it, and runs it on
-*your* copy; no keys are baked into the tool.
+tool finds it automatically and prints a single key-bundle string. Close the
+Ninja app and anything else talking to the grill first; a live connection can
+stop it advertising, so the scan won't see it. It pulls the library out of the
+package, finds the key routine inside it, and runs it on *your* copy; no keys
+are baked into the tool.
 
-> The derived keys are specific to the grill's address. If auto-detect finds a
-> single grill, double-check the printed address is **your own** before using
-> the bundle; with several grills in range, pass `--mac` for yours.
+> The session keys are derived from the grill's address; the bundle also
+> includes a device-independent beacon key. Only use it for your own grill (or
+> one you're explicitly authorised to). If auto-detect finds a single grill,
+> double-check the printed address is **your own** before using the bundle;
+> with several grills in range, pass `--mac` for yours.
 
 **3. Paste it into Home Assistant.** *Add Integration → Ninja Woodfire → Local*
 (the grill also shows up under Bluetooth auto-discovery), pick your grill and
 paste the bundle. The keys stay on your machine. Cloud setup needs none of this.
 
-**App versions.** The keys are the same across app versions; only their location
-in the library moves, and the extractor finds that itself — so it isn't tied to
-one build. Verified against:
+**App versions.** In the two versions tested the keys were identical; only their
+location in the library moved, and the extractor finds that itself — so it isn't
+tied to one build. Verified against:
 
 | App version | `libgrillcore_android.so` SHA-256 |
 |---|---|
