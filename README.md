@@ -62,27 +62,29 @@ integration. Nothing secret is distributed here; the extraction tool only reads
 the keys out of a copy you already have, for the sole purpose of making your own
 grill interoperate with Home Assistant.
 
-1. From your own copy of the Ninja app that you are licensed to use (for example
-   the one installed on your phone), obtain `lib/arm64-v8a/libgrillcore.so` — pull
-   it from your device, or unzip the app package you already have. Use a copy you
-   are entitled to; don't source it from third parties if that isn't allowed to you.
-2. Run the extractor with that file and your grill's Bluetooth address
-   (needs Python with `unicorn`, `capstone` and `cryptography`):
+1. Get the Ninja app package you're licensed to use — an `.apkm`/`.apk` you
+   downloaded, or the app installed on your own device. You don't need to unpack
+   it; the tool reads `libgrillcore.so` out of it. Use a copy you're entitled to.
+2. Run the extractor on that file; power the grill on and it finds everything
+   itself (needs Python with `unicorn`, `capstone`, `cryptography`, and `bleak`
+   for the auto-detect):
    ```bash
-   python3 scripts/extract_ninja_keys.py --so libgrillcore.so --mac AA:BB:CC:DD:EE:FF
+   python3 scripts/extract_ninja_keys.py --app your-ninja-app.apkm
    ```
-   It emulates the app's own key routine on your copy and prints a single key
-   bundle string. No keys are baked into this tool.
+   It pulls the library out of the package, locates the key routine inside it,
+   emulates it on *your* copy, finds your grill over Bluetooth, and prints a
+   single key-bundle string. (Pass `--mac AA:BB:…` to skip the scan, or `--kdf`
+   if a new build isn't auto-detected.) No keys are baked into this tool.
 3. In Home Assistant: *Add Integration → Ninja Woodfire → Local*, pick your grill
    and paste the bundle. Done — the keys stay on your machine.
 
 Cloud setup needs none of this.
 
-**Tested app versions.** The extractor is tuned to **Ninja app 1.17.1-2361**
-(`libgrillcore.so` sha256 `acb9dfab…`). Other versions usually still work if the
-key routine sits at the same address; if not, it prints a note and you can pass
-the key-init address with `--kdf 0x…`. Found a build that works (or the right
-`--kdf` for one)? Please open an issue so we can list it here.
+**App versions.** The extractor is **version-independent** — it locates the key
+routine and `malloc` inside the library itself, so it isn't tied to one build
+(verified on **1.17.1-2361** and **1.28.0-3274**). If a future build changes the
+layout enough that auto-detection fails, it says so and you can pass the key
+routine address with `--kdf 0x…`. If you hit such a build, please open an issue.
 
 ## Install & set up
 
