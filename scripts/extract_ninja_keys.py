@@ -9,8 +9,12 @@ key) with your grill's Bluetooth address to produce the three session/beacon
 slots the integration needs, printed as one base64 "key bundle".
 
 Needs:  pip install unicorn capstone cryptography
+        (plus `bleak` if you let it auto-detect the grill's address)
 
 Usage:
+    # auto-detect the grill over Bluetooth (just power it on, in range):
+    python3 extract_ninja_keys.py --so libgrillcore.so
+    # or give the address yourself:
     python3 extract_ninja_keys.py --so libgrillcore.so --mac AA:BB:CC:DD:EE:FF
 
 For the reference build (app 1.17.1-2361) the defaults below are correct. For a
@@ -33,7 +37,12 @@ except ImportError:
     sys.exit("needs unicorn:  pip install unicorn")
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
-# Reference build 1.17.1-2361 (sha acb9dfab…). Override --kdf for other builds.
+# Known-good reference build. The offsets below (KDF/malloc/text-delta) are tied
+# to THIS build; a different app version will almost certainly need a different
+# --kdf (and possibly MALLOC_PLT / _TEXT_VADDR_DELTA). See "Tested app versions"
+# in the README; please report other builds that work.
+REFERENCE_VERSION = "Ninja app 1.17.1-2361"
+REFERENCE_SHA256 = "acb9dfab73c7a50f7c537e8e06f0d009567319d81aa58434e61df3be4c982f83"
 DEFAULT_KDF = 0x174144      # key-init function entry (RVA / file vaddr, base 0)
 MALLOC_PLT = 0x491160       # malloc@plt
 
@@ -244,17 +253,67 @@ def _derive_slots(seed: bytes, c: dict[str, bytes]) -> list[tuple[bytes, bytes]]
     return slots
 
 
+def _find_grill_mac(timeout: float = 10.0) -> str:
+    """Scan for the grill and read its MAC from the advertised name ('NCEU<mac>').
+
+    The name is cleartext, so this works on macOS too (where the BLE *address*
+    is an opaque CoreBluetooth UUID, not the real MAC the KDF needs).
+    """
+    try:
+        from bleak import BleakScanner
+    except ImportError:
+        sys.exit("no --mac given and bleak is not installed: pip install bleak (or pass --mac)")
+    import asyncio
+    found: dict[str, str] = {}
+
+    def cb(dev, adv):
+        name = (adv.local_name or getattr(dev, "name", None) or "")
+        if name.startswith("NCEU") and len(name) >= 16:
+            mac_hex = name[4:16]
+            if all(c in "0123456789abcdefABCDEF" for c in mac_hex):
+                found[mac_hex.lower()] = name
+
+    async def scan():
+        scanner = BleakScanner(detection_callback=cb)
+        print(f"Scanning {timeout:.0f}s for a Woodfire grill (power it on, in range)…",
+              file=sys.stderr)
+        await scanner.start()
+        await asyncio.sleep(timeout)
+        await scanner.stop()
+
+    asyncio.run(scan())
+    if not found:
+        sys.exit("no Woodfire grill found over Bluetooth; power it on and keep it in "
+                 "range, or pass --mac")
+    if len(found) > 1:
+        print(f"multiple grills found: {sorted(found)} — using the first; pass --mac "
+              "to choose", file=sys.stderr)
+    mac_hex = sorted(found)[0]
+    mac = ":".join(mac_hex[i:i + 2] for i in range(0, 12, 2)).upper()
+    print(f"Found grill: {mac}", file=sys.stderr)
+    return mac
+
+
 def main():
     p = argparse.ArgumentParser(description="Extract the Woodfire local key bundle "
                                 "from your own libgrillcore.so")
     p.add_argument("--so", required=True, help="path to libgrillcore.so from your APK")
-    p.add_argument("--mac", required=True, help="grill Bluetooth address AA:BB:CC:DD:EE:FF")
+    p.add_argument("--mac", default=None,
+                   help="grill Bluetooth address AA:BB:CC:DD:EE:FF; omit to auto-detect over BLE")
     p.add_argument("--kdf", type=lambda x: int(x, 0), default=DEFAULT_KDF)
     args = p.parse_args()
 
-    seed = bytes.fromhex(args.mac.replace(":", "").replace("-", ""))
+    mac = args.mac or _find_grill_mac()
+    seed = bytes.fromhex(mac.replace(":", "").replace("-", ""))
     if len(seed) != 6:
-        sys.exit("--mac must be a 6-byte Bluetooth address")
+        sys.exit("could not determine a 6-byte grill Bluetooth address")
+
+    import hashlib
+    sha = hashlib.sha256(open(args.so, "rb").read()).hexdigest()
+    if sha != REFERENCE_SHA256:
+        print(f"note: this libgrillcore.so (sha256 {sha[:12]}…) is not the tested "
+              f"build ({REFERENCE_VERSION}). If extraction fails, find the key-init "
+              f"RVA for your build and pass it with --kdf.", file=sys.stderr)
 
     consts = _extract_constants(args.so, args.kdf)
     slots = _derive_slots(seed, consts)

@@ -18,11 +18,13 @@ Home Assistant — **fully local over Bluetooth**, or over the Ninja cloud.
 
 Chosen in the setup wizard:
 
+- **Cloud** — sign in with your Ninja Kitchen account (Ayla/AWS). The simplest
+  start, no extra steps, and you can keep using the Ninja app alongside Home
+  Assistant. *(recommended to start)*
 - **Local (Bluetooth)** — no account, no cloud. Full cook control, live
-  temperatures, meat probe and lid over Bluetooth (ESPHome proxies work). Needs
-  a one-time key bundle you extract yourself from your own copy of the vendor
-  app — see **[Local setup — extract your keys](#local-setup--extract-your-keys)**.
-- **Cloud** — sign in with your Ninja Kitchen account (Ayla/AWS). *(no extra steps)*
+  temperatures, meat probe and lid over Bluetooth (ESPHome proxies work). Needs a
+  one-time key bundle you extract yourself from your own copy of the app — see
+  **[Local setup — extract your keys](#local-setup--extract-your-keys)**.
 
 Matching Lovelace card: [ninja-woodfire-card](https://github.com/coxtor/ninja-woodfire-card).
 
@@ -76,6 +78,12 @@ grill interoperate with Home Assistant.
 
 Cloud setup needs none of this.
 
+**Tested app versions.** The extractor is tuned to **Ninja app 1.17.1-2361**
+(`libgrillcore.so` sha256 `acb9dfab…`). Other versions usually still work if the
+key routine sits at the same address; if not, it prints a note and you can pass
+the key-init address with `--kdf 0x…`. Found a build that works (or the right
+`--kdf` for one)? Please open an issue so we can list it here.
+
 ## Install & set up
 
 **Install (HACS):** HACS → Integrations → ⋮ → *Custom repositories* → add this
@@ -83,8 +91,18 @@ repo as *Integration* → install → restart. *(Or copy
 `custom_components/ninja_woodfire/` manually and restart.)*
 
 **Set up:** *Settings → Devices & services → Add Integration → Ninja Woodfire*,
-then pick **Local** (choose your grill from the Bluetooth list) or **Cloud**
-(sign in, pick your grill).
+then pick **Cloud** (sign in, pick your grill) or **Local** (paste the key bundle
+from *Local setup — extract your keys* above).
+
+## Blueprints (one-click import)
+
+Ready-made Home Assistant automations — click to import, then pick your notify
+service:
+
+- **Cook prompts** (add food / flip / done / get food)
+  [![Import blueprint](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2Fcoxtor%2Fninja-woodfire-integration%2Fblob%2Fmain%2Fblueprints%2Fautomation%2Fninja_woodfire%2Fcook_prompts.yaml)
+- **Meat probe reached target** (optionally also at halfway)
+  [![Import blueprint](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2Fcoxtor%2Fninja-woodfire-integration%2Fblob%2Fmain%2Fblueprints%2Fautomation%2Fninja_woodfire%2Fprobe_target.yaml)
 
 ## Node-RED notifications
 

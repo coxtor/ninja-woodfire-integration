@@ -1,0 +1,36 @@
+blueprint:
+  name: Ninja Woodfire — notify on cook prompts
+  description: >
+    Send a notification whenever the grill shows a prompt on its display:
+    add food, flip, done or get food. Works on the local (Bluetooth) and cloud
+    paths. Pick the notify service for the device you want to ping.
+  domain: automation
+  source_url: https://github.com/coxtor/ninja-woodfire-integration/blob/main/blueprints/automation/ninja_woodfire/cook_prompts.yaml
+  input:
+    notify_service:
+      name: Notify service
+      description: The notification service to call, e.g. notify.mobile_app_pixel.
+      selector:
+        text: {}
+    title:
+      name: Title
+      default: Ninja Woodfire
+      selector:
+        text: {}
+
+trigger:
+  - platform: event
+    event_type: ninja_woodfire_prompt
+
+action:
+  - variables:
+      prompt: "{{ trigger.event.data.prompt }}"
+      messages:
+        addfood: Add the food to the grill.
+        flipfood: Flip the food.
+        done: The cook is done.
+        getfood: Get the food — it's ready.
+  - service: "{{ notify_service }}"
+    data:
+      title: !input title
+      message: "{{ messages.get(prompt, prompt) }}"

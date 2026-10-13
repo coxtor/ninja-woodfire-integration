@@ -1,0 +1,49 @@
+blueprint:
+  name: Ninja Woodfire — notify when the meat probe hits its target
+  description: >
+    Send a notification when a meat probe reaches its target temperature, and
+    (optionally) another at the halfway point. Pick the notify service for the
+    device you want to ping.
+  domain: automation
+  source_url: https://github.com/coxtor/ninja-woodfire-integration/blob/main/blueprints/automation/ninja_woodfire/probe_target.yaml
+  input:
+    notify_service:
+      name: Notify service
+      description: The notification service to call, e.g. notify.mobile_app_pixel.
+      selector:
+        text: {}
+    notify_halfway:
+      name: Also notify at halfway
+      default: false
+      selector:
+        boolean: {}
+
+trigger:
+  - platform: event
+    event_type: ninja_woodfire_probe_target_reached
+    id: target
+  - platform: event
+    event_type: ninja_woodfire_probe_halfway
+    id: halfway
+
+condition:
+  - condition: template
+    value_template: "{{ trigger.id == 'target' or notify_halfway }}"
+
+action:
+  - variables:
+      probe: "{{ trigger.event.data.probe_index + 1 }}"
+  - service: "{{ notify_service }}"
+    data:
+      title: Ninja Woodfire
+      message: >
+        {% if trigger.id == 'target' %}
+        Probe {{ probe }} reached its target of {{ trigger.event.data.target }}°C
+        (now {{ trigger.event.data.current }}°C).
+        {% else %}
+        Probe {{ probe }} is halfway to {{ trigger.event.data.target }}°C
+        (now {{ trigger.event.data.current }}°C).
+        {% endif %}
+
+variables:
+  notify_halfway: !input notify_halfway
