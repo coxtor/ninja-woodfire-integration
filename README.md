@@ -15,8 +15,7 @@ Two modes, chosen in the setup wizard:
 - **Cloud** — sign in with your Ninja Kitchen account; the grill is read and
   controlled over SharkNinja's Ayla/AWS backends.
 
-Temperatures follow your Home Assistant unit system (°C/°F). For a matching
-Lovelace card, see [ninja-woodfire-card](https://github.com/coxtor/ninja-woodfire-card).
+For a matching Lovelace card, see [ninja-woodfire-card](https://github.com/coxtor/ninja-woodfire-card).
 
 ## Features
 
