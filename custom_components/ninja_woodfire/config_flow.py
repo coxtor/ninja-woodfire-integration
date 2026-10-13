@@ -30,6 +30,20 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
+# Friendly label for local (Bluetooth) grills. The grill advertises its MAC as
+# its BLE name, which is ugly in discovery and as the device name, so we fall
+# back to this unless the adapter reports a genuine, non-MAC name.
+_LOCAL_NAME = "Ninja Woodfire"
+
+
+def _nice_name(name: str | None, address: str | None) -> str:
+    """A human name for a local grill; ignore a MAC-shaped BLE name."""
+    cleaned = (name or "").strip()
+    mac_shaped = len(cleaned) == 17 and all(c in "0123456789ABCDEFabcdef:" for c in cleaned)
+    if not cleaned or mac_shaped or cleaned.casefold() == (address or "").casefold():
+        return _LOCAL_NAME
+    return cleaned
+
 # Standard form shows just the account info. The six vendor-credential
 # overrides are expert escape hatches (for when the bundled defaults rotate)
 # and only appear when the user has Home Assistant's "Advanced Mode" enabled.
@@ -79,8 +93,8 @@ class NinjaWoodfireConfigFlow(ConfigFlow, domain=DOMAIN):
         await self.async_set_unique_id(discovery_info.address)
         self._abort_if_unique_id_configured()
         self._ble_address = discovery_info.address
-        self._ble_name = discovery_info.name
-        self.context["title_placeholders"] = {"name": discovery_info.name or "Ninja Woodfire"}
+        self._ble_name = _nice_name(discovery_info.name, discovery_info.address)
+        self.context["title_placeholders"] = {"name": self._ble_name}
         return await self.async_step_local()
 
     async def async_step_user(
@@ -149,7 +163,7 @@ class NinjaWoodfireConfigFlow(ConfigFlow, domain=DOMAIN):
             from .const import BLE_SERVICE_UUID
 
             discovered = {
-                info.address: f"{info.name or 'Woodfire'} ({info.address})"
+                info.address: f"{_nice_name(info.name, info.address)} ({info.address})"
                 for info in bluetooth.async_discovered_service_info(self.hass, connectable=True)
                 if BLE_SERVICE_UUID in (info.service_uuids or [])
             }
@@ -168,7 +182,7 @@ class NinjaWoodfireConfigFlow(ConfigFlow, domain=DOMAIN):
                 await self.async_set_unique_id(address)
                 self._abort_if_unique_id_configured()
                 return self.async_create_entry(
-                    title=self._ble_name or "Ninja Woodfire (local)",
+                    title=self._ble_name or _LOCAL_NAME,
                     data={CONF_DSN: address, CONF_BLE_ADDRESS: address},
                 )
 

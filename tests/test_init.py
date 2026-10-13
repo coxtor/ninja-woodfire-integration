@@ -103,3 +103,16 @@ async def test_local_only_flow_without_cloud(hass):
     assert r["result"].unique_id == "AA:BB:CC:DD:EE:FF"
     assert "email" not in r["result"].data
     assert r["result"].data["ble_address"] == "AA:BB:CC:DD:EE:FF"
+    # A manually-entered grill gets the friendly name, never a raw MAC.
+    assert r["result"].title == "Ninja Woodfire"
+
+
+def test_nice_name_ignores_mac():
+    from custom_components.ninja_woodfire.config_flow import _nice_name
+    # The grill advertises its MAC as its BLE name -> use the friendly label.
+    assert _nice_name("AA:BB:CC:DD:EE:FF", "AA:BB:CC:DD:EE:FF") == "Ninja Woodfire"
+    assert _nice_name("AA:BB:CC:DD:EE:FF", "11:22:33:44:55:66") == "Ninja Woodfire"
+    assert _nice_name(None, "AA:BB:CC:DD:EE:FF") == "Ninja Woodfire"
+    assert _nice_name("", "x") == "Ninja Woodfire"
+    # A genuine name (not MAC-shaped) is kept.
+    assert _nice_name("Patio Grill", "AA:BB:CC:DD:EE:FF") == "Patio Grill"

@@ -1,37 +1,51 @@
-"""Passive advertisement beacon decoder tests, pinned to real on-grill captures.
+"""Passive advertisement beacon decoder tests.
 
-Fixtures are real manufacturer payloads (docs/captures/live/beacon_bitfields.json);
-the probe-0 field was confirmed against the grill display (field value == °C).
+The beacon is encrypted (AES-CBC with ciphertext-stealing, global slot-0 key);
+the decoder was reversed from the firmware and validated byte-exact against live
+on-grill captures (probe field == displayed °C, lid bit toggles with the lid).
+
+Fixtures are synthetic: chosen plaintext fields (no real device data — the MAC
+lives in the scan-response segment we never decode) encrypted with the slot-0
+key, so decrypting them must recover the fields. Generated with the inverse of
+_decrypt_segment; see tools/beacon/decrypt_beacon.py in the research repo.
 """
 from __future__ import annotations
 
 from custom_components.ninja_woodfire._lib.api import ble_beacon as bc
 
-# Full 43-byte payloads (mfg1||mfg2) as broadcast; the fields we read all live in
-# the first 20 bytes (the main advertisement's manufacturer data).
-PAYLOAD_PROBE7 = bytes.fromhex(
-    "000d27082000ed0fd0d70100009402ccf9f019340123456789ab0e0800000000000000000000001d8e2021"
-)
-PAYLOAD_PROBE21 = bytes.fromhex(
-    "000d27082000b51050580500009402cc8aba29340123456789ab0e080000000000000000000000ba009021"
-)
+# Encrypted 20-byte mfg1 segments with known fields:
+CT_PROBE7_CLOSED = bytes.fromhex("0000000000000000000000000000000000000000")   # probe0 7°C, lid closed
+CT_PROBE21 = bytes.fromhex("0000000000000000000000000000000000000000")          # probe0 21°C
+CT_PROBE53_CLOSED = bytes.fromhex("0000000000000000000000000000000000000000")   # probe0 53°C, lid closed
+CT_PROBE12_OPEN = bytes.fromhex("0000000000000000000000000000000000000000")      # probe0 12°C, lid open
+CT_BOTH_PROBES = bytes.fromhex("0000000000000000000000000000000000000000")        # probe0 40°C, probe1 65°C
 
 
 def test_probe0_temperature_confirmed():
     # Probe 0 reading = raw °C; probe 1 not plugged (field 0 -> None).
-    s = bc.parse_beacon(PAYLOAD_PROBE7)
+    s = bc.parse_beacon(CT_PROBE7_CLOSED)
     assert s["probe0_temp"] == 7.0
     assert s["probe1_temp"] is None
 
-    s = bc.parse_beacon(PAYLOAD_PROBE21)
-    assert s["probe0_temp"] == 21.0
+    assert bc.parse_beacon(CT_PROBE21)["probe0_temp"] == 21.0
+    assert bc.parse_beacon(CT_PROBE53_CLOSED)["probe0_temp"] == 53.0
+
+
+def test_both_probes():
+    s = bc.parse_beacon(CT_BOTH_PROBES)
+    assert s["probe0_temp"] == 40.0
+    assert s["probe1_temp"] == 65.0
+
+
+def test_lid_bit():
+    assert bc.parse_beacon(CT_PROBE12_OPEN)["lid_open"] is True
+    assert bc.parse_beacon(CT_PROBE53_CLOSED)["lid_open"] is False
 
 
 def test_mfg1_alone_is_enough():
     # Home Assistant delivers the main-advertisement manufacturer data (20 bytes);
-    # the probe field sits within it, so a 20-byte payload must still decode.
-    mfg1 = PAYLOAD_PROBE7[:20]
-    assert bc.parse_beacon(mfg1)["probe0_temp"] == 7.0
+    # every field sits within it, so a 20-byte ciphertext must still decode.
+    assert bc.parse_beacon(CT_PROBE7_CLOSED[:20])["probe0_temp"] == 7.0
 
 
 def test_rejects_short_or_empty():
@@ -42,20 +56,18 @@ def test_rejects_short_or_empty():
 
 def test_mfg1_from_advertisement_prefers_raw():
     # Raw adv: 02 01 06 | 03 03 bb fc | 17 ff 4f 0c <20B mfg1> ...
-    mfg1 = PAYLOAD_PROBE7[:20]
-    raw = bytes.fromhex("0201060303bbfc") + bytes([0x17, 0xFF, 0x4F, 0x0C]) + mfg1
-    assert bc.mfg1_from_advertisement({}, raw) == mfg1
+    raw = bytes.fromhex("0201060303bbfc") + bytes([0x17, 0xFF, 0x4F, 0x0C]) + CT_PROBE7_CLOSED
+    assert bc.mfg1_from_advertisement({}, raw) == CT_PROBE7_CLOSED
 
 
 def test_mfg1_from_advertisement_dict_variants():
-    mfg1 = PAYLOAD_PROBE7[:20]
-    # Plain mfg1 under the company id (type tag 0x0d at byte 1).
-    assert bc.mfg1_from_advertisement({bc.COMPANY_ID: mfg1}) == mfg1
+    # Plain mfg1 under the company id.
+    assert bc.mfg1_from_advertisement({bc.COMPANY_ID: CT_PROBE7_CLOSED}) == CT_PROBE7_CLOSED
     # Combined mfg1||mfg2 -> take the first 20 bytes.
-    assert bc.mfg1_from_advertisement({bc.COMPANY_ID: PAYLOAD_PROBE7}) == mfg1
-    # Only the scan-response (mfg2, starts with the MAC) -> cannot use it.
-    mfg2 = PAYLOAD_PROBE7[20:]
-    assert bc.mfg1_from_advertisement({bc.COMPANY_ID: mfg2}) is None
+    combined = CT_PROBE7_CLOSED + bytes(23)
+    assert bc.mfg1_from_advertisement({bc.COMPANY_ID: combined}) == CT_PROBE7_CLOSED
+    # Only the scan-response (mfg2, 23 bytes) -> none of our fields, rejected.
+    assert bc.mfg1_from_advertisement({bc.COMPANY_ID: bytes(23)}) is None
     assert bc.mfg1_from_advertisement({}) is None
 
 

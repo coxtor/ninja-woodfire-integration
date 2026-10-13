@@ -135,9 +135,11 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
         self.last_success_at: datetime | None = None
         self.failed_polls = 0
         self.last_error: str | None = None
-        # Meat-probe temps read passively from the BLE advertisement beacon
-        # (the GATT 0x0f frame never carries them). Merged into the local state.
+        # Meat-probe temps and lid state read passively from the BLE
+        # advertisement beacon (the GATT 0x0f frame carries neither). Merged
+        # into the local state.
         self.beacon_probes: list[float | None] = [None, None]
+        self.beacon_lid: bool | None = None
         self._beacon_at: float = 0.0
         self.beacon_unsub = None
 
@@ -203,6 +205,7 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
         if parsed is None:
             return
         self.beacon_probes = [parsed["probe0_temp"], parsed["probe1_temp"]]
+        self.beacon_lid = parsed["lid_open"]
         self._beacon_at = time.monotonic()
         # Push the fresh reading to entities without waiting for the next poll.
         if self.data is not None and self.backend == "ble":
@@ -219,6 +222,9 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
             return
         if time.monotonic() - self._beacon_at > _BEACON_TTL_S:
             return
+        # The lid switch is in the beacon too; surface it even with no probe.
+        if self.beacon_lid is not None:
+            state.grill.lid_open = self.beacon_lid
         if not any(t is not None for t in self.beacon_probes):
             return
         probes = []

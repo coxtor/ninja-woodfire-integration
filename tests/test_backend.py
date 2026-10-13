@@ -292,3 +292,41 @@ async def test_local_only_coordinator_has_no_cloud(hass, entry):
     assert c.backend == "ble"
     with pytest.raises(HomeAssistantError):
         await c.async_set_grill_name("Patio")
+
+
+# Encrypted mfg1 beacon segments (synthetic; see test_ble_beacon). probe0 53°C
+# lid closed; lid open with no probe.
+_BEACON_PROBE53_CLOSED = bytes.fromhex("0000000000000000000000000000000000000000")
+_BEACON_NOPROBE_OPEN = bytes.fromhex("0000000000000000000000000000000000000000")
+
+
+async def test_beacon_merges_probe_and_lid_into_local_state(hass, entry):
+    from unittest.mock import AsyncMock
+    from custom_components.ninja_woodfire.coordinator import NinjaWoodfireCoordinator
+    from custom_components.ninja_woodfire._lib.capabilities import WOODFIRE_PRO_XL
+
+    ble = AsyncMock()
+    ble.get_combined_state.return_value = mk_state()
+    c = NinjaWoodfireCoordinator(hass, entry, None, DSN, WOODFIRE_PRO_XL, 0, ble=ble)
+    await c.async_refresh()
+    assert c.backend == "ble"
+
+    c.update_beacon(_BEACON_PROBE53_CLOSED)
+    assert c.data.probes.probes[0].temp == 53.0
+    assert c.data.probes.probes[0].plugged_in is True
+    assert c.data.grill.lid_open is False
+
+
+async def test_beacon_lid_without_probe(hass, entry):
+    from unittest.mock import AsyncMock
+    from custom_components.ninja_woodfire.coordinator import NinjaWoodfireCoordinator
+    from custom_components.ninja_woodfire._lib.capabilities import WOODFIRE_PRO_XL
+
+    ble = AsyncMock()
+    ble.get_combined_state.return_value = mk_state()
+    c = NinjaWoodfireCoordinator(hass, entry, None, DSN, WOODFIRE_PRO_XL, 0, ble=ble)
+    await c.async_refresh()
+
+    c.update_beacon(_BEACON_NOPROBE_OPEN)
+    assert c.data.grill.lid_open is True
+    assert all(p.temp == 0.0 for p in c.data.probes.probes) or not c.data.probes.probes
