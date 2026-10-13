@@ -20,7 +20,9 @@ notification each:
 
 ## Import & setup
 
-1. Node-RED → ☰ → *Import* → paste `woodfire_flow.json`.
+1. Node-RED → ☰ → *Import* → paste the flow. Two languages are provided:
+   `woodfire_flow.json` (English) and `woodfire_flow_de.json` (German) — the
+   notification texts differ; the logic is identical.
 2. Pick your Home Assistant **server** in the event and notify nodes
    (Node-RED prompts for the unknown server config on import).
 3. Open the **notify node** and change `notify.notify` to your own service,
