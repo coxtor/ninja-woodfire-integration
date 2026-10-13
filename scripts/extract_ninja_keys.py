@@ -386,11 +386,14 @@ def _find_grill_mac(timeout: float = 10.0) -> str:
         sys.exit("no Woodfire grill found over Bluetooth; power it on and keep it in "
                  "range, or pass --mac")
     if len(found) > 1:
-        print(f"multiple grills found: {sorted(found)} — using the first; pass --mac "
-              "to choose", file=sys.stderr)
-    mac_hex = sorted(found)[0]
+        macs = ", ".join(":".join(h[i:i + 2] for i in range(0, 12, 2)).upper()
+                         for h in sorted(found))
+        sys.exit(f"more than one Woodfire grill in range ({macs}); re-run with "
+                 "--mac <your grill's address> so keys are only derived for your own grill")
+    mac_hex = next(iter(found))
     mac = ":".join(mac_hex[i:i + 2] for i in range(0, 12, 2)).upper()
-    print(f"Found grill: {mac}", file=sys.stderr)
+    print(f"Found grill: {mac} — make sure this is your own grill before using the bundle",
+          file=sys.stderr)
     return mac
 
 

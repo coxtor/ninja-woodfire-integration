@@ -57,34 +57,57 @@ all (the grill just stops advertising), so it simply shows as offline.
 
 **This project ships no key material.** Talking to the grill locally needs a few
 AES keys that live inside the vendor app. You extract them **once, yourself, from
-your own, lawfully-installed copy of the app**, and paste the result into the
-integration. Nothing secret is distributed here; the extraction tool only reads
-the keys out of a copy you already have, for the sole purpose of making your own
-grill interoperate with Home Assistant.
+your own copy of the app**, and paste the result into the integration. Nothing
+secret is distributed here; the tool only reads the keys out of a copy you
+already have, so that your own grill interoperates with Home Assistant.
 
-1. Get the Ninja app package you're licensed to use — an `.apkm`/`.apk` you
-   downloaded, or the app installed on your own device. You don't need to unpack
-   it; the tool reads `libgrillcore.so` out of it. Use a copy you're entitled to.
-2. Run the extractor on that file; power the grill on and it finds everything
-   itself (needs Python with `unicorn`, `capstone`, `cryptography`, and `bleak`
-   for the auto-detect):
-   ```bash
-   python3 scripts/extract_ninja_keys.py --app your-ninja-app.apkm
-   ```
-   It pulls the library out of the package, locates the key routine inside it,
-   emulates it on *your* copy, finds your grill over Bluetooth, and prints a
-   single key-bundle string. (Pass `--mac AA:BB:…` to skip the scan, or `--kdf`
-   if a new build isn't auto-detected.) No keys are baked into this tool.
-3. In Home Assistant: *Add Integration → Ninja Woodfire → Local*, pick your grill
-   and paste the bundle. Done — the keys stay on your machine.
+**1. Get the Ninja app.** From your own device, or downloaded from another
+source — an `.apkm`, `.apk` or an extracted `libgrillcore.so` all work. Use a
+copy you're entitled to use.
 
-Cloud setup needs none of this.
+**2. Run the extractor.** It needs Python 3 with a few packages; a throwaway
+virtualenv keeps them off your system:
 
-**App versions.** The extractor is **version-independent** — it locates the key
-routine and `malloc` inside the library itself, so it isn't tied to one build
-(verified on **1.17.1-2361** and **1.28.0-3274**). If a future build changes the
-layout enough that auto-detection fails, it says so and you can pass the key
-routine address with `--kdf 0x…`. If you hit such a build, please open an issue.
+```bash
+python3 -m venv /tmp/ninja && . /tmp/ninja/bin/activate
+pip install unicorn capstone cryptography bleak
+python3 scripts/extract_ninja_keys.py --app your-ninja-app.apkm
+```
+
+Power the grill on and keep it in range — if it's the only Woodfire nearby the
+tool finds it automatically and prints a single key-bundle string. It pulls the
+library out of the package, finds the key routine inside it, and runs it on
+*your* copy; no keys are baked into the tool.
+
+> The derived keys are specific to the grill's address. If auto-detect finds a
+> single grill, double-check the printed address is **your own** before using
+> the bundle; with several grills in range, pass `--mac` for yours.
+
+**3. Paste it into Home Assistant.** *Add Integration → Ninja Woodfire → Local*
+(the grill also shows up under Bluetooth auto-discovery), pick your grill and
+paste the bundle. The keys stay on your machine. Cloud setup needs none of this.
+
+**App versions.** The keys are the same across app versions; only their location
+in the library moves, and the extractor finds that itself — so it isn't tied to
+one build. Verified against:
+
+| App version | `libgrillcore_android.so` SHA-256 |
+|---|---|
+| 1.17.1-2361 | `acb9dfab73c7a50f7c537e8e06f0d009567319d81aa58434e61df3be4c982f83` |
+| 1.28.0-3274 | `02bd4536ab1e46312d5b5899cb08581c3fd6e3b61ccafa2d1cb75da1d44f62f1` |
+
+Versions between (and newer ones) should work too; if auto-detection ever fails,
+pass `--kdf 0x…`, and please open an issue so the version can be added here.
+
+### Extractor flags
+
+Normally you only need `--app` — the rest are for edge cases.
+
+| Flag | Meaning |
+|---|---|
+| `--app PATH` | **(required)** the `.apkm` / `.apk` you got, or an extracted `libgrillcore.so`. |
+| `--mac AA:BB:…` | your grill's Bluetooth address; skips the scan. **Required if more than one grill is in range** (the tool refuses to guess). |
+| `--kdf 0x…` | override the key-routine address — only needed if auto-detection ever fails on a new build. |
 
 ## Install & set up
 
@@ -154,15 +177,15 @@ depends on a third party that may change or break it at any time.
 **Safety:** this integration starts, stops and changes **cooking on a device
 with a heating element**. Treat it as a convenience, not a safety control —
 never leave the grill running unattended, keep it clear of flammables, and don't
-rely on automations for anything safety-critical. You are solely responsible for
-safe operation; nothing here overrides that, whatever the licence says.
+rely on automations for anything safety-critical. Please operate the grill
+safely — within the limits of applicable law, the software is provided as-is
+without warranty (see LICENSE), and that cannot override your own duty of care.
 
-**Independent interoperability project.** This is an independently written
-program that makes your *own* grill work with Home Assistant; it contains no
-vendor code, libraries or keys. Any key extraction is done by you, locally,
-against your own licensed copy of the app, only to the extent needed for that
-interoperability. You are responsible for complying with the app's terms and
-your local law.
+**Independent interoperability project.** This program is written to make your
+*own* grill work with Home Assistant; it bundles no vendor application code,
+libraries or keys. Any key extraction is done by you, locally, against your own
+copy of the app, only to the extent needed for that interoperability. You are
+responsible for complying with the app's terms and your local law.
 
 Unofficial and independent — **not affiliated with or endorsed by SharkNinja
 Operating LLC**. "Ninja", "Woodfire" and related names are trademarks of their
