@@ -28,20 +28,11 @@
           "dsn": "Grill"
         }
       },
-      "ble": {
-        "title": "Local control over Bluetooth (optional)",
-        "description": "Paste the session slots from the extractor to control grill {dsn} locally over BLE (works through ESPHome Bluetooth proxies, no cloud needed). Leave empty to stay cloud-only. The integration prefers BLE and falls back to the cloud automatically.",
-        "data": {
-          "ble_slots": "BLE session slots (paste block)",
-          "ble_address": "Grill Bluetooth address (optional, auto-detected if empty)"
-        }
-      },
       "local": {
         "title": "Local control over Bluetooth",
-        "description": "No account needed. The grill is found over Bluetooth (ESPHome proxies work) and its session keys are derived automatically from its Bluetooth address — nothing to paste. The slots field is an optional advanced override.",
+        "description": "No account needed. The grill is found over Bluetooth (ESPHome proxies work) and its session keys are derived automatically from its public Bluetooth address — nothing to paste.",
         "data": {
-          "ble_slots": "BLE session slots (optional override)",
-          "ble_address": "Grill Bluetooth address (optional)"
+          "ble_address": "Bluetooth address (leave empty to auto-detect)"
         }
       },
       "reauth_confirm": {
@@ -57,7 +48,6 @@
       "cannot_connect": "Cannot reach Ninja cloud.",
       "no_devices": "No grills found on this account.",
       "unknown": "Unexpected error.",
-      "bad_slots": "Could not parse the BLE slots. Expected base64 (96 bytes) or four hex tokens: tx_key tx_nonce rx_key rx_nonce.",
       "no_ble_device": "No Woodfire grill found over Bluetooth. Enter its address, or make sure an adapter/proxy is in range."
     },
     "abort": {

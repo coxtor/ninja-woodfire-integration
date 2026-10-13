@@ -133,12 +133,27 @@ def _latest(bodies: list[bytes], frame_type: int) -> dict | None:
     return None
 
 
-def _combined_state(dsn: str, state: dict | None) -> CombinedState:
-    """Build CombinedState from a parsed GrillState frame (prefix fields only).
+# Modes whose chamber reading is the convection/air sensor (mirrors the cloud
+# model's per-mode temperature semantics).
+_AIR_MODES = frozenset({"air crisp", "bake", "roast", "reheat", "dehydrate"})
 
-    Chamber/probe temperatures are not yet decoded from BLE (variable-length
-    section, pending firmware-parser decompile), so GrillTemps stay None and the
-    card hides them — grill mode, timer and online status are populated.
+
+def _chamber_temps(mode: str | None, chamber: float | None) -> GrillTemps:
+    """Put the single chamber reading on the sensor the mode uses."""
+    if chamber is None:
+        return GrillTemps()
+    if mode in _AIR_MODES:
+        return GrillTemps(air=chamber)
+    return GrillTemps(grill=chamber)
+
+
+def _combined_state(dsn: str, state: dict | None) -> CombinedState:
+    """Build CombinedState from a parsed GrillState frame.
+
+    The chamber temperature is decoded and placed on the grill or air sensor to
+    match the mode (as the cloud model does). The meat-probe reading is not in
+    this frame (firmware ships it only in the encrypted advertisement beacon),
+    so probes stay empty and the card hides them.
     """
     now = datetime.now(tz=timezone.utc)
     grill = GrillState()
@@ -157,9 +172,7 @@ def _combined_state(dsn: str, state: dict | None) -> CombinedState:
             seconds_set=state.get("seconds_set"),
             seconds_left=left,
             end_time_utc=end_utc,
-            # Chamber/probe temps are not yet decoded from BLE (see ble_proto);
-            # left as None so the card hides them rather than showing guesses.
-            temps=GrillTemps(),
+            temps=_chamber_temps(state.get("mode"), state.get("chamber")),
         )
         cook = CookState(state="cooking" if active else "none")
     return CombinedState(

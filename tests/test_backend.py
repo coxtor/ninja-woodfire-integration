@@ -127,7 +127,6 @@ async def test_user_flow_stores_aws_overrides(hass):
             "email": "a@b.c", "password": "x", "aws_api_base": " https://aws.invalid ", "aws_api_key": "",
         })
         r = await hass.config_entries.flow.async_configure(r["flow_id"], {"dsn": DSN})
-        r = await hass.config_entries.flow.async_configure(r["flow_id"], {"ble_slots": ""})
     assert r["result"].data["aws_api_base"] == "https://aws.invalid"
     assert "aws_api_key" not in r["result"].data
 

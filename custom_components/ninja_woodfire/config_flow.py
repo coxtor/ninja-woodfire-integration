@@ -11,7 +11,6 @@ from homeassistant.config_entries import ConfigFlow, ConfigFlowResult
 from homeassistant.const import CONF_EMAIL, CONF_PASSWORD
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-from ._lib.api import ble_proto
 from ._lib.api.ayla import AuthError, AylaCloudClient, TransportError
 from ._lib.const import REGION_DEFAULTS, make_region
 
@@ -23,7 +22,6 @@ from .const import (
     CONF_AYLA_APP_ID,
     CONF_AYLA_APP_SECRET,
     CONF_BLE_ADDRESS,
-    CONF_BLE_SLOTS,
     CONF_DSN,
     CONF_REGION,
     DEFAULT_REGION,
@@ -73,8 +71,6 @@ class NinjaWoodfireConfigFlow(ConfigFlow, domain=DOMAIN):
     def __init__(self) -> None:
         self._user_input: dict[str, Any] | None = None
         self._devices: list[dict[str, Any]] = []
-        self._entry_data: dict[str, Any] = {}
-        self._title: str = ""
         self._ble_address: str | None = None
         self._ble_name: str | None = None
 
@@ -140,10 +136,11 @@ class NinjaWoodfireConfigFlow(ConfigFlow, domain=DOMAIN):
     async def async_step_local(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Local-only setup: no cloud account, just the BLE session slots.
+        """Local-only setup: no cloud account, just the grill's BLE address.
 
-        Identifies the grill over Bluetooth (service fcbb). Needs a local
-        Bluetooth adapter or an ESPHome Bluetooth proxy in range.
+        Identifies the grill over Bluetooth (service fcbb); the session keys are
+        derived at runtime from its public address. Needs a local Bluetooth
+        adapter or an ESPHome Bluetooth proxy in range.
         """
         discovered: dict[str, str] = {}
         try:
@@ -160,36 +157,25 @@ class NinjaWoodfireConfigFlow(ConfigFlow, domain=DOMAIN):
             discovered = {}
         errors: dict[str, str] = {}
         if user_input is not None:
-            slots = (user_input.get(CONF_BLE_SLOTS) or "").strip()
             address = (self._ble_address or user_input.get(CONF_BLE_ADDRESS) or "").strip()
             if not address and len(discovered) == 1:
                 address = next(iter(discovered))
-            # Slots are derived from the grill's BLE address (public MAC). A
-            # pasted blob is only an optional override.
-            if slots:
-                try:
-                    ble_proto.parse_slots_blob(slots)
-                except ValueError:
-                    errors["base"] = "bad_slots"
-            if not errors and not address:
+            if not address:
                 errors["base"] = "no_ble_device"
-            if not errors:
+            else:
+                # The session keys are derived at runtime from the grill's public
+                # BLE address — no secret, no token, nothing to paste.
                 await self.async_set_unique_id(address)
                 self._abort_if_unique_id_configured()
-                data = {CONF_DSN: address, CONF_BLE_ADDRESS: address}
-                if slots:
-                    data[CONF_BLE_SLOTS] = slots
                 return self.async_create_entry(
-                    title=self._ble_name or "Ninja Woodfire (local)", data=data,
+                    title=self._ble_name or "Ninja Woodfire (local)",
+                    data={CONF_DSN: address, CONF_BLE_ADDRESS: address},
                 )
 
         addr_field = vol.In(discovered) if discovered else str
         return self.async_show_form(
             step_id="local",
-            data_schema=vol.Schema({
-                vol.Optional(CONF_BLE_SLOTS, default=""): str,
-                vol.Optional(CONF_BLE_ADDRESS, default=""): addr_field,
-            }),
+            data_schema=vol.Schema({vol.Optional(CONF_BLE_ADDRESS, default=""): addr_field}),
             errors=errors,
         )
 
@@ -224,9 +210,7 @@ class NinjaWoodfireConfigFlow(ConfigFlow, domain=DOMAIN):
                 v = _opt(self._user_input.get(key))
                 if v:
                     data[key] = v
-            self._entry_data = data
-            self._title = title
-            return await self.async_step_ble()
+            return self.async_create_entry(title=title, data=data)
 
         choices = {
             d.get("dsn", ""): f"{d.get('product_name') or d.get('oem_model') or 'Grill'} ({d.get('dsn')})"
@@ -235,40 +219,6 @@ class NinjaWoodfireConfigFlow(ConfigFlow, domain=DOMAIN):
         return self.async_show_form(
             step_id="pick_device",
             data_schema=vol.Schema({vol.Required(CONF_DSN): vol.In(choices)}),
-        )
-
-    async def async_step_ble(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
-        """Optional: enable the local BLE path by pasting the extracted slots.
-
-        Leave empty to stay cloud-only (unchanged behaviour). With slots, the
-        integration prefers local BLE (BT-proxy capable) and falls back to cloud.
-        """
-        errors: dict[str, str] = {}
-        if user_input is not None:
-            slots = (user_input.get(CONF_BLE_SLOTS) or "").strip()
-            if not slots:
-                return self.async_create_entry(title=self._title, data=self._entry_data)
-            try:
-                ble_proto.parse_slots_blob(slots)
-            except ValueError:
-                errors["base"] = "bad_slots"
-            else:
-                data = {**self._entry_data, CONF_BLE_SLOTS: slots}
-                addr = (user_input.get(CONF_BLE_ADDRESS) or "").strip()
-                if addr:
-                    data[CONF_BLE_ADDRESS] = addr
-                return self.async_create_entry(title=self._title, data=data)
-
-        return self.async_show_form(
-            step_id="ble",
-            data_schema=vol.Schema({
-                vol.Optional(CONF_BLE_SLOTS, default=""): str,
-                vol.Optional(CONF_BLE_ADDRESS, default=""): str,
-            }),
-            errors=errors,
-            description_placeholders={"dsn": self._entry_data.get(CONF_DSN, "")},
         )
 
     async def async_step_reauth(

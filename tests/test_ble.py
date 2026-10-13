@@ -47,7 +47,7 @@ class FakeLink:
 
 @pytest.mark.asyncio
 async def test_get_combined_state_from_live_frames():
-    info_body = bytes.fromhex("0c3a41433030305730333630323534343400000000000000c0ff22040300b300010103000000534e443030303030353335393635300000000000")
+    info_body = bytes.fromhex("0c3a41433030305730333630323534343400000000000000c0ff22040300b300010103000000534e443030303030303030303030300000000000")
     link = FakeLink([
         [_rx_frame(b"\x10" + bytes(22), TOKEN)],   # handshake -> token
         [_rx_frame(STATE_BODY, TOKEN), _rx_frame(info_body, TOKEN)],  # state + grill-info

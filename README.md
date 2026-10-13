@@ -9,8 +9,17 @@
 > **Note:** This is primarily a Claude-assisted project.
 
 Home Assistant integration for the Ninja Woodfire Connect Pro XL
-outdoor grill. Connects via your Ninja Kitchen account; no local
-network access to the grill is required.
+outdoor grill. It offers two modes, chosen in the setup wizard:
+
+- **Cloud** — sign in with your Ninja Kitchen account; the grill is
+  read and controlled over SharkNinja's Ayla/AWS backends. No local
+  network access to the grill is required.
+- **Local (Bluetooth)** — no account at all. The grill is found over
+  Bluetooth and controlled directly, including through ESPHome
+  Bluetooth proxies. See [Local control (no cloud)](#local-control-no-cloud).
+
+Temperatures are shown in whatever unit your Home Assistant system
+uses (°C or °F) — there is no separate unit switch.
 
 For a custom Lovelace card, see [ninja-woodfire-card](https://github.com/coxtor/ninja-woodfire-card).
 
@@ -23,6 +32,11 @@ For a custom Lovelace card, see [ninja-woodfire-card](https://github.com/coxtor/
   number (heat-level for grill, °C for everything else). Duration,
   smoke, per-probe targets — changes during a running cook are applied
   live and keep heat level, probe targets and elapsed time.
+- Local Bluetooth control: the same cook controls and live chamber
+  temperature, timer / remaining time and status / phase, with no
+  cloud account. The meat-probe temperature is read passively from
+  the grill's BLE advertisement (broadcast in cleartext, no
+  connection needed) and exposed as a sensor.
 - Cloud diagnostic entities: connection, backend, last report, Wi-Fi
   signal (AWS only), last successful poll and failed polls with the
   last error — readable during an outage.
@@ -66,12 +80,64 @@ Copy `custom_components/ninja_woodfire/` into your Home Assistant
 ## Setup
 
 1. *Settings → Devices & services → Add Integration → Ninja Woodfire*
-2. Sign in with your Ninja Kitchen account
-3. Pick your grill
+2. Choose **Cloud** or **Local**:
 
-The six "advanced" fields in the form are optional and used only if
-the bundled defaults stop working — see [Fallback: regenerating
-credentials](#fallback-regenerating-credentials) below.
+   **Cloud**
+   1. Sign in with your Ninja Kitchen account
+   2. Pick your grill
+
+   **Local**
+   1. Pick your grill from the detected Bluetooth devices (or type its
+      Bluetooth address)
+
+   That is all there is to local setup — there is no token, key or slot
+   to paste.
+
+In cloud mode, the six "advanced" fields in the form are optional and
+used only if the bundled defaults stop working — see [Fallback:
+regenerating credentials](#fallback-regenerating-credentials) below.
+
+## Local control (no cloud)
+
+Local mode talks to the grill directly over Bluetooth Low Energy, with
+no Ninja Kitchen account and nothing to paste. The grill is identified
+by its Bluetooth service (`fcbb`); the session keys are derived at
+runtime from the grill's public Bluetooth address (MAC), so there is no
+secret, token or key to enter or store.
+
+It runs on Home Assistant's own Bluetooth stack, so a local Bluetooth
+adapter *or* an ESPHome Bluetooth proxy within range of the grill both
+work.
+
+**Requirements**
+
+- A Bluetooth adapter on the Home Assistant host, or an ESPHome
+  Bluetooth proxy in range of the grill.
+- The grill powered on and within Bluetooth range of that adapter/proxy.
+
+**What works locally**
+
+- Start / stop a cook, all cooking modes.
+- Target temperature, duration, smoke and per-probe targets.
+- Live chamber temperature, timer / remaining time, status / phase.
+- Meat-probe temperature, read passively from the grill's BLE
+  advertisement. The grill broadcasts it in cleartext, so this works
+  without any connection and shows up as a sensor.
+
+Transport choice is transparent: a local-only entry does everything
+over Bluetooth, and the cloud backends are used only if an account was
+set up.
+
+> **Known limitation:** the local chamber-temperature scaling is still
+> being finally verified; the passive probe reading is confirmed
+> against the grill display.
+
+### On reverse engineering
+
+Local control was built by reverse engineering the grill's Bluetooth
+protocol for interoperability. No SharkNinja keys are shipped with the
+integration — the session keys are derived at runtime from the grill's
+public Bluetooth address.
 
 ## SharkNinja AWS backend
 

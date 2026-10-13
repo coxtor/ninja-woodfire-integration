@@ -17,9 +17,10 @@ from homeassistant.util import dt as dt_util
 from ._lib.api import GrillTransport
 from ._lib.api.aws import AwsCloudClient, is_connected, state_from_device
 from ._lib.api.ayla import AylaCloudClient
+from ._lib.api.ble_beacon import parse_beacon
 from ._lib.api.errors import AuthError, NinjaCloudError, TransportError
 from ._lib.capabilities import GrillCapabilities, grill_level
-from ._lib.models import CombinedState
+from ._lib.models import CombinedState, ProbeInfo, ProbeMode, ProbeState
 
 from .const import (
     ACTIVE_STATES,
@@ -53,6 +54,8 @@ _AWS_RECHECK_S = 600
 _AWS_RETRY_S = 60
 # How long to stay on cloud after a BLE failure before retrying the local link.
 _BLE_RETRY_S = 60
+# How long a passively-scanned advertisement beacon reading stays valid.
+_BEACON_TTL_S = 60
 
 type NinjaWoodfireConfigEntry = ConfigEntry[NinjaWoodfireCoordinator]
 
@@ -132,6 +135,11 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
         self.last_success_at: datetime | None = None
         self.failed_polls = 0
         self.last_error: str | None = None
+        # Meat-probe temps read passively from the BLE advertisement beacon
+        # (the GATT 0x0f frame never carries them). Merged into the local state.
+        self.beacon_probes: list[float | None] = [None, None]
+        self._beacon_at: float = 0.0
+        self.beacon_unsub = None
 
     # ------------------------------------------------------------------ polling
 
@@ -163,6 +171,7 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
         self.last_success_at = dt_util.utcnow()
         self.failed_polls = 0
         self._normalize(state)
+        self._merge_beacon(state)
         active = (
             state.online
             and (is_active(state) or state.cook.state in ACTIVE_STATES)
@@ -180,6 +189,51 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
         self.failed_polls += 1
         self.last_error = str(err)
         return err
+
+    # ------------------------------------------------------------- beacon (passive)
+
+    @callback
+    def update_beacon(self, mfg: bytes | None) -> None:
+        """Store probe temps from a passively-scanned advertisement beacon.
+
+        The meat-probe temperature is not in the GATT state frame; the grill
+        broadcasts it in its advertisement. Called from a Bluetooth callback.
+        """
+        parsed = parse_beacon(mfg)
+        if parsed is None:
+            return
+        self.beacon_probes = [parsed["probe0_temp"], parsed["probe1_temp"]]
+        self._beacon_at = time.monotonic()
+        # Push the fresh reading to entities without waiting for the next poll.
+        if self.data is not None and self.backend == "ble":
+            self._merge_beacon(self.data)
+            self.async_update_listeners()
+
+    def _merge_beacon(self, state: CombinedState) -> None:
+        """Overlay beacon probe temps onto a local (BLE) state.
+
+        Only the local path needs this; the cloud backends report probes
+        themselves. Skipped when the beacon reading is stale or empty.
+        """
+        if self.backend != "ble":
+            return
+        if time.monotonic() - self._beacon_at > _BEACON_TTL_S:
+            return
+        if not any(t is not None for t in self.beacon_probes):
+            return
+        probes = []
+        for idx, temp in enumerate(self.beacon_probes):
+            plugged = temp is not None
+            enabled = self.cook_setting_probe_enabled[idx]
+            target = self.cook_setting_probe_setpoint[idx] if enabled else None
+            probes.append(ProbeInfo(
+                name=f"probe{idx}",
+                plugged_in=plugged,
+                active=plugged and enabled,
+                temp=temp or 0.0,
+                target=ProbeMode(mode="manual", setpoint=target) if target else ProbeMode(),
+            ))
+        state.probes = ProbeState(probes=probes)
 
     @callback
     def _async_refresh_finished(self) -> None:
