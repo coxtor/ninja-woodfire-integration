@@ -102,10 +102,10 @@ def check_adb_device() -> None:
 
 
 def capture_logcat(seconds: int) -> str:
-    print(f"adb: clearing log buffer")
+    print("adb: clearing log buffer")
     subprocess.run(["adb", "logcat", "-c"], check=False)
     print(f"adb: capturing for {seconds}s — open the Ninja Kitchen app NOW")
-    print(f"     (force-stop first, then open and let the device list load)")
+    print("     (force-stop first, then open and let the device list load)")
     proc = subprocess.Popen(
         ["adb", "logcat", "-v", "raw", "*:V"],
         stdout=subprocess.PIPE,
