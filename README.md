@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="custom_components/ninja_woodfire/brand/icon.png" width="180" alt="Ninja Woodfire">
+</p>
+
 <h1 align="center">Ninja Woodfire — Home Assistant</h1>
 
 <p align="center">
