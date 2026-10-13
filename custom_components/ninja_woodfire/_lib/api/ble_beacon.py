@@ -10,8 +10,8 @@ The payload is encrypted. Reversed from the firmware (libgrillcore
 FUN_002727f8 / FUN_00273bac) and validated byte-exact against live captures:
 
   cipher  AES-128-ECB used as CBC with ciphertext-stealing (CTS), per segment
-  key     the global BLE "slot 0" key   (seed-independent, not a vendor secret)
-  iv      the global BLE "slot 0" nonce
+  key     the global BLE "slot 0" key    (the same on every grill; caller-supplied)
+  iv      the global BLE "slot 0" nonce   (caller-supplied)
 
 Decryption is a pure function of the advertisement bytes (no per-frame secret).
 The main advertisement's manufacturer data (mfg1, 20 bytes) decrypts to the

@@ -55,12 +55,15 @@ all (the grill just stops advertising), so it simply shows as offline.
 
 **This project ships no key material.** Talking to the grill locally needs a few
 AES keys that live inside the vendor app. You extract them **once, yourself, from
-your own copy of the app**, and paste the result into the integration. Nothing
-secret is distributed here; the extraction tool only reads the keys out of a copy
-you already have.
+your own, lawfully-installed copy of the app**, and paste the result into the
+integration. Nothing secret is distributed here; the extraction tool only reads
+the keys out of a copy you already have, for the sole purpose of making your own
+grill interoperate with Home Assistant.
 
-1. Download the Ninja app APK (e.g. from APKMirror) and unzip it; find
-   `lib/arm64-v8a/libgrillcore.so` inside.
+1. From your own copy of the Ninja app that you are licensed to use (for example
+   the one installed on your phone), obtain `lib/arm64-v8a/libgrillcore.so` — pull
+   it from your device, or unzip the app package you already have. Use a copy you
+   are entitled to; don't source it from third parties if that isn't allowed to you.
 2. Run the extractor with that file and your grill's Bluetooth address
    (needs Python with `unicorn`, `capstone` and `cryptography`):
    ```bash
@@ -128,8 +131,20 @@ debugging and `adb`) and paste them into the *advanced* config fields.
 Personal hobby project, **as-is — no support, no warranty**; the cloud path
 depends on a third party that may change or break it at any time.
 
+**Safety:** this integration starts, stops and changes **cooking on a device
+with a heating element**. Treat it as a convenience, not a safety control —
+never leave the grill running unattended, keep it clear of flammables, and don't
+rely on automations for anything safety-critical. You are solely responsible for
+safe operation; nothing here overrides that, whatever the licence says.
+
+**Independent interoperability project.** This is an independently written
+program that makes your *own* grill work with Home Assistant; it contains no
+vendor code, libraries or keys. Any key extraction is done by you, locally,
+against your own licensed copy of the app, only to the extent needed for that
+interoperability. You are responsible for complying with the app's terms and
+your local law.
+
 Unofficial and independent — **not affiliated with or endorsed by SharkNinja
 Operating LLC**. "Ninja", "Woodfire" and related names are trademarks of their
-owners, used here only to identify the device this integrates with. You are
-responsible for complying with applicable terms and laws. Use at your own risk.
-MIT — see [LICENSE](LICENSE).
+owners, used here only to identify the device this integrates with. Use at your
+own risk. MIT — see [LICENSE](LICENSE).
