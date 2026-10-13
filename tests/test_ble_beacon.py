@@ -42,6 +42,30 @@ def test_lid_bit():
     assert bc.parse_beacon(CT_PROBE53_CLOSED)["lid_open"] is False
 
 
+# Encrypted mfg1 segments with known phase/prompt (mapped against a live cook).
+CT_PREHEAT = bytes.fromhex("0000000000000000000000000000000000000000")       # phase preheat
+CT_COOK_ADDFOOD = bytes.fromhex("0000000000000000000000000000000000000000")  # cooking + add-food prompt
+CT_COOK_FLIP = bytes.fromhex("0000000000000000000000000000000000000000")     # cooking + flip prompt
+CT_DONE_GETFOOD = bytes.fromhex("0000000000000000000000000000000000000000")  # done + get-food prompt
+CT_IGNITION = bytes.fromhex("0000000000000000000000000000000000000000")       # ignition (smoke mode)
+
+
+def test_phase_and_prompt():
+    s = bc.parse_beacon(CT_PREHEAT)
+    assert s["phase"] == "preheat" and s["prompt"] is None
+    assert bc.parse_beacon(CT_IGNITION)["phase"] == "ignition"
+    s = bc.parse_beacon(CT_COOK_ADDFOOD)
+    assert s["phase"] == "cooking" and s["prompt"] == "addfood"
+    s = bc.parse_beacon(CT_COOK_FLIP)
+    assert s["phase"] == "cooking" and s["prompt"] == "flipfood"
+    s = bc.parse_beacon(CT_DONE_GETFOOD)
+    assert s["phase"] is None and s["prompt"] == "getfood"
+
+    # A plain probe frame has no phase/prompt set.
+    s = bc.parse_beacon(CT_PROBE7_CLOSED)
+    assert s["phase"] is None and s["prompt"] is None
+
+
 def test_mfg1_alone_is_enough():
     # Home Assistant delivers the main-advertisement manufacturer data (20 bytes);
     # every field sits within it, so a 20-byte ciphertext must still decode.

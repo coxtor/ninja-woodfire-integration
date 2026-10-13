@@ -330,3 +330,58 @@ async def test_beacon_lid_without_probe(hass, entry):
     c.update_beacon(_BEACON_NOPROBE_OPEN)
     assert c.data.grill.lid_open is True
     assert all(p.temp == 0.0 for p in c.data.probes.probes) or not c.data.probes.probes
+
+
+async def test_wake_sends_stop_to_wake_an_idle_grill(hass, entry):
+    from unittest.mock import AsyncMock
+    from custom_components.ninja_woodfire.coordinator import NinjaWoodfireCoordinator
+    from custom_components.ninja_woodfire._lib.capabilities import WOODFIRE_PRO_XL
+
+    ble = AsyncMock()
+    ble.get_combined_state.return_value = mk_state()  # idle
+    c = NinjaWoodfireCoordinator(hass, entry, None, DSN, WOODFIRE_PRO_XL, 0, ble=ble)
+    await c.async_refresh()
+    c.async_request_refresh = AsyncMock()
+    await c.async_wake()
+    # A bare connect won't wake the grill; Stop does.
+    ble.stop_cook.assert_awaited_once()
+
+
+async def test_wake_never_stops_an_active_cook(hass, entry):
+    from unittest.mock import AsyncMock
+    from custom_components.ninja_woodfire.coordinator import NinjaWoodfireCoordinator
+    from custom_components.ninja_woodfire._lib.capabilities import WOODFIRE_PRO_XL
+    from .conftest import cooking
+
+    ble = AsyncMock()
+    ble.get_combined_state.return_value = mk_state(cooking(mode="grill", setpoint=260))
+    c = NinjaWoodfireCoordinator(hass, entry, None, DSN, WOODFIRE_PRO_XL, 0, ble=ble)
+    await c.async_refresh()
+    c.async_request_refresh = AsyncMock()
+    await c.async_wake()
+    ble.stop_cook.assert_not_called()
+
+
+_BEACON_PREHEAT = bytes.fromhex("0000000000000000000000000000000000000000")
+_BEACON_ADDFOOD = bytes.fromhex("0000000000000000000000000000000000000000")
+
+
+async def test_beacon_phase_and_prompt_merge_locally(hass, entry):
+    from unittest.mock import AsyncMock
+    from custom_components.ninja_woodfire.coordinator import NinjaWoodfireCoordinator, is_preheating
+    from custom_components.ninja_woodfire._lib.capabilities import WOODFIRE_PRO_XL
+
+    ble = AsyncMock()
+    ble.get_combined_state.return_value = mk_state()
+    c = NinjaWoodfireCoordinator(hass, entry, None, DSN, WOODFIRE_PRO_XL, 0, ble=ble)
+    await c.async_refresh()
+
+    # Preheat: the beacon is the only local preheat signal, so Skip preheat works.
+    c.update_beacon(_BEACON_PREHEAT)
+    assert c.data.grill.state == "preheat"
+    assert is_preheating(c.data) is True
+
+    # Add-food prompt arrives -> prompt set, preheat is over.
+    c.update_beacon(_BEACON_ADDFOOD)
+    assert c.data.grill.prompt == "addfood"
+    assert is_preheating(c.data) is False

@@ -140,6 +140,8 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
         # into the local state.
         self.beacon_probes: list[float | None] = [None, None]
         self.beacon_lid: bool | None = None
+        self.beacon_phase: str | None = None
+        self.beacon_prompt: str | None = None
         self._beacon_at: float = 0.0
         self.beacon_unsub = None
 
@@ -206,6 +208,8 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
             return
         self.beacon_probes = [parsed["probe0_temp"], parsed["probe1_temp"]]
         self.beacon_lid = parsed["lid_open"]
+        self.beacon_phase = parsed["phase"]
+        self.beacon_prompt = parsed["prompt"]
         self._beacon_at = time.monotonic()
         # Push the fresh reading to entities without waiting for the next poll.
         if self.data is not None and self.backend == "ble":
@@ -222,9 +226,18 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
             return
         if time.monotonic() - self._beacon_at > _BEACON_TTL_S:
             return
-        # The lid switch is in the beacon too; surface it even with no probe.
+        # The lid switch, cook phase and display prompt are in the beacon too;
+        # surface them even with no probe. The phase gives the local path its
+        # only preheat signal (the GATT frame can't tell preheat from cooking),
+        # which is what enables Skip preheat and the preheat-complete event.
         if self.beacon_lid is not None:
             state.grill.lid_open = self.beacon_lid
+        if self.beacon_prompt is not None:
+            state.grill.prompt = self.beacon_prompt
+        # preheat (grill/air) and ignition (smoke) are both "still heating up",
+        # the only local preheat signal; surface them unless add-food cleared it.
+        if self.beacon_phase in ("preheat", "ignition") and self.beacon_prompt != "addfood":
+            state.grill.state = self.beacon_phase
         if not any(t is not None for t in self.beacon_probes):
             return
         probes = []
@@ -572,11 +585,17 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
         await self._burst_refresh()
 
     async def async_wake(self) -> None:
-        """Nudge the grill awake by forcing a fresh connection / poll.
+        """Wake a grill that has gone to standby.
 
-        A grill in standby wakes when a Bluetooth central connects; refreshing
-        drives the transport to (re)connect and poll it.
+        A bare BLE connect does not wake the grill; sending a Stop command does
+        (it beeps and comes back online). We only send Stop when no cook is
+        running, so an active cook is never interrupted; then refresh.
         """
+        if self.backend == "ble" and not self.is_cook_active:
+            try:
+                await self.transport.stop_cook(self.dsn)
+            except (NinjaCloudError, TransportError):
+                pass
         await self.async_request_refresh()
 
     async def async_skip_preheat(self) -> None:
