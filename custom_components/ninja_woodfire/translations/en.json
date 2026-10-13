@@ -142,7 +142,7 @@
         "name": "Device serial (DSN)"
       },
       "cloud_backend": {
-        "name": "Cloud backend"
+        "name": "Backend"
       },
       "last_report": {
         "name": "Last report"
@@ -219,6 +219,9 @@
       },
       "skip_preheat": {
         "name": "Skip preheat"
+      },
+      "wake": {
+        "name": "Wake"
       }
     }
   }

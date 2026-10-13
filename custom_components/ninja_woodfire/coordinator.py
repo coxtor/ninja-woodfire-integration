@@ -565,6 +565,14 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
         self._seconds_override = None
         await self._burst_refresh()
 
+    async def async_wake(self) -> None:
+        """Nudge the grill awake by forcing a fresh connection / poll.
+
+        A grill in standby wakes when a Bluetooth central connects; refreshing
+        drives the transport to (re)connect and poll it.
+        """
+        await self.async_request_refresh()
+
     async def async_skip_preheat(self) -> None:
         live = self.data
         if live is None or not live.online or not is_preheating(live):

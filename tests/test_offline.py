@@ -234,6 +234,8 @@ STAYS_AVAILABLE = {
     "cook_mode", "cook_smoke", "cook_skip_preheat", "probe0_enabled", "probe1_enabled",
     "firmware_version", "oem_model", "dsn", "stop_cook", "cloud_connected", "cloud_backend",
     "last_report", "wifi_signal", "last_successful_poll", "failed_polls",
+    # Pressable ad-hoc even while offline: skip-preheat and wake-the-grill.
+    "skip_preheat", "wake",
 }
 
 

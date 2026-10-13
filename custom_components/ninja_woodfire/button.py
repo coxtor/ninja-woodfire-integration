@@ -37,7 +37,15 @@ BUTTONS: tuple[NinjaButtonDescription, ...] = (
         key="skip_preheat",
         translation_key="skip_preheat",
         icon="mdi:fast-forward",
+        always_available=True,
         press_fn=lambda c: c.async_skip_preheat(),
+    ),
+    NinjaButtonDescription(
+        key="wake",
+        translation_key="wake",
+        icon="mdi:bell-ring",
+        always_available=True,
+        press_fn=lambda c: c.async_wake(),
     ),
 )
 

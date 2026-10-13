@@ -142,7 +142,7 @@
         "name": "Geräte-Seriennr. (DSN)"
       },
       "cloud_backend": {
-        "name": "Cloud-Backend"
+        "name": "Backend"
       },
       "last_report": {
         "name": "Letzte Meldung"
@@ -219,6 +219,9 @@
       },
       "skip_preheat": {
         "name": "Vorheizen überspringen"
+      },
+      "wake": {
+        "name": "Aufwecken"
       }
     }
   }
