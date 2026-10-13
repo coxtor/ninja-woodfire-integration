@@ -36,9 +36,9 @@ Matching Lovelace card: [ninja-woodfire-card](https://github.com/coxtor/ninja-wo
 ## Local control (no cloud)
 
 Local communication with the grill over Bluetooth LE — no account needed. All
-cook controls and live temperatures (including the meat probe) work locally; the
-*Wake* button nudges a grill in standby back online. Works through ESPHome
-Bluetooth proxies.
+cook controls and the live chamber temperature work locally; the *Wake* button
+nudges a grill in standby back online. Works through ESPHome Bluetooth proxies.
+(The meat-probe temperature is only available over the cloud for now.)
 
 ## Install & set up
 

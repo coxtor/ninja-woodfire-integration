@@ -105,7 +105,7 @@ class GrillState:
     message: str = ""
     event_mask: str = ""
     prompt: str | None = None        # addfood | flipfood | done | getfood, from "<bit>:<name>"
-    lid_open: bool = False
+    lid_open: bool | None = False
     sim: int = 0
     temps: GrillTemps = field(default_factory=GrillTemps)
     raw: dict[str, Any] = field(default_factory=dict)

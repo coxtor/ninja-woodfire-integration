@@ -175,6 +175,9 @@ def _combined_state(dsn: str, state: dict | None) -> CombinedState:
             temps=_chamber_temps(state.get("mode"), state.get("chamber")),
         )
         cook = CookState(state="cooking" if active else "none")
+    # The lid state is not decoded over the local path; report it as unknown
+    # rather than defaulting to "closed".
+    grill.lid_open = None
     return CombinedState(
         dsn=dsn,
         grill=grill,
