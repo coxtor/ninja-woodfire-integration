@@ -435,9 +435,19 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     coordinator = entry.runtime_data
+    # In local-only (BLE, no cloud account) mode some cloud-specific diagnostics
+    # don't apply (there is no Wi-Fi, no cloud firmware/model query).
+    local = coordinator.client is None
+    skip = {"wifi_signal", "firmware_version", "oem_model"} if local else set()
     entities: list[SensorEntity] = [NinjaSensor(coordinator, desc) for desc in SENSORS]
-    entities.extend(NinjaDiagnosticSensor(coordinator, desc) for desc in DIAGNOSTICS)
-    entities.extend(NinjaCloudSensor(coordinator, desc) for desc in CLOUD_SENSORS)
+    entities.extend(
+        NinjaDiagnosticSensor(coordinator, desc)
+        for desc in DIAGNOSTICS if desc.key not in skip
+    )
+    entities.extend(
+        NinjaCloudSensor(coordinator, desc)
+        for desc in CLOUD_SENSORS if desc.key not in skip
+    )
     async_add_entities(entities)
 
 
@@ -492,8 +502,10 @@ class NinjaDiagnosticSensor(NinjaWoodfireEntity, SensorEntity):
 
     @property
     def native_value(self) -> Any:
-        if self._info_key in ("dsn", "backend"):
-            return getattr(self.coordinator, self._info_key)
+        if self._info_key == "dsn":
+            return self.coordinator.grill_serial or self.coordinator.dsn
+        if self._info_key == "backend":
+            return self.coordinator.backend
         return self.coordinator.device_info_extra.get(self._info_key) or None
 
 

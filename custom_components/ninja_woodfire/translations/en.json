@@ -2,6 +2,12 @@
   "config": {
     "step": {
       "user": {
+        "menu_options": {
+          "cloud": "Cloud account (online grill)",
+          "local": "Local only — Bluetooth (no cloud)"
+        }
+      },
+      "cloud": {
         "title": "Ninja Woodfire",
         "description": "Sign in with your Ninja Kitchen account. Leave the six advanced fields below empty unless the bundled defaults stop working — see the project README for the extractor script if you need to override them.",
         "data": {
@@ -16,17 +22,33 @@
           "aws_api_key": "AWS API key (optional)"
         }
       },
+      "pick_device": {
+        "title": "Pick a grill",
+        "data": {
+          "dsn": "Grill"
+        }
+      },
+      "ble": {
+        "title": "Local control over Bluetooth (optional)",
+        "description": "Paste the session slots from the extractor to control grill {dsn} locally over BLE (works through ESPHome Bluetooth proxies, no cloud needed). Leave empty to stay cloud-only. The integration prefers BLE and falls back to the cloud automatically.",
+        "data": {
+          "ble_slots": "BLE session slots (paste block)",
+          "ble_address": "Grill Bluetooth address (optional, auto-detected if empty)"
+        }
+      },
+      "local": {
+        "title": "Local control over Bluetooth",
+        "description": "No account needed. The grill is found over Bluetooth (ESPHome proxies work) and its session keys are derived automatically from its Bluetooth address — nothing to paste. The slots field is an optional advanced override.",
+        "data": {
+          "ble_slots": "BLE session slots (optional override)",
+          "ble_address": "Grill Bluetooth address (optional)"
+        }
+      },
       "reauth_confirm": {
         "title": "Re-authenticate",
         "description": "The Ninja cloud rejected the stored login for {email}. Enter your current password.",
         "data": {
           "password": "Password"
-        }
-      },
-      "pick_device": {
-        "title": "Pick a grill",
-        "data": {
-          "dsn": "Grill"
         }
       }
     },
@@ -34,7 +56,9 @@
       "invalid_auth": "Invalid email or password.",
       "cannot_connect": "Cannot reach Ninja cloud.",
       "no_devices": "No grills found on this account.",
-      "unknown": "Unexpected error."
+      "unknown": "Unexpected error.",
+      "bad_slots": "Could not parse the BLE slots. Expected base64 (96 bytes) or four hex tokens: tx_key tx_nonce rx_key rx_nonce.",
+      "no_ble_device": "No Woodfire grill found over Bluetooth. Enter its address, or make sure an adapter/proxy is in range."
     },
     "abort": {
       "already_configured": "This grill is already configured.",
@@ -43,68 +67,169 @@
   },
   "entity": {
     "sensor": {
-      "grill_temp": { "name": "Grill temperature" },
-      "air_temp": { "name": "Air temperature" },
-      "smoke_temp": { "name": "Smoke temperature" },
-      "grill_state": { "name": "Grill state" },
-      "cook_state": { "name": "Cook state" },
-      "active_mode": { "name": "Active cook mode" },
-      "setpoint": { "name": "Active setpoint" },
-      "seconds_left": { "name": "Time remaining" },
-      "end_time": { "name": "Cook ends at" },
-      "cook_progress": { "name": "Cook progress" },
-      "preheat_progress": { "name": "Preheat progress" },
-      "error_code": { "name": "Error code" },
-      "probe0_temp": { "name": "Probe 1 temperature" },
-      "probe1_temp": { "name": "Probe 2 temperature" },
-      "probe0_progress": { "name": "Probe 1 progress" },
-      "probe1_progress": { "name": "Probe 2 progress" },
-      "probe0_setpoint": { "name": "Probe 1 active target" },
-      "probe1_setpoint": { "name": "Probe 2 active target" },
-      "probe0_state": { "name": "Probe 1 state" },
-      "probe1_state": { "name": "Probe 2 state" },
-      "event_mask": { "name": "Event mask" },
+      "grill_temp": {
+        "name": "Grill temperature"
+      },
+      "air_temp": {
+        "name": "Air temperature"
+      },
+      "smoke_temp": {
+        "name": "Smoke temperature"
+      },
+      "grill_state": {
+        "name": "Grill state"
+      },
+      "cook_state": {
+        "name": "Cook state"
+      },
+      "active_mode": {
+        "name": "Active cook mode"
+      },
+      "setpoint": {
+        "name": "Active setpoint"
+      },
+      "seconds_left": {
+        "name": "Time remaining"
+      },
+      "end_time": {
+        "name": "Cook ends at"
+      },
+      "cook_progress": {
+        "name": "Cook progress"
+      },
+      "preheat_progress": {
+        "name": "Preheat progress"
+      },
+      "error_code": {
+        "name": "Error code"
+      },
+      "probe0_temp": {
+        "name": "Probe 1 temperature"
+      },
+      "probe1_temp": {
+        "name": "Probe 2 temperature"
+      },
+      "probe0_progress": {
+        "name": "Probe 1 progress"
+      },
+      "probe1_progress": {
+        "name": "Probe 2 progress"
+      },
+      "probe0_setpoint": {
+        "name": "Probe 1 active target"
+      },
+      "probe1_setpoint": {
+        "name": "Probe 2 active target"
+      },
+      "probe0_state": {
+        "name": "Probe 1 state"
+      },
+      "probe1_state": {
+        "name": "Probe 2 state"
+      },
+      "event_mask": {
+        "name": "Event mask"
+      },
       "prompt": {
         "name": "Prompt",
-        "state": { "addfood": "Add food", "flipfood": "Flip food", "done": "Done", "getfood": "Get food" }
+        "state": {
+          "addfood": "Add food",
+          "flipfood": "Flip food",
+          "done": "Done",
+          "getfood": "Get food"
+        }
       },
-      "message": { "name": "Message" },
-      "firmware_version": { "name": "Firmware version" },
-      "oem_model": { "name": "Model" },
-      "dsn": { "name": "Device serial (DSN)" },
-      "cloud_backend": { "name": "Cloud backend" },
-      "last_report": { "name": "Last report" },
-      "wifi_signal": { "name": "Wi-Fi signal" },
-      "last_successful_poll": { "name": "Last successful poll" },
-      "failed_polls": { "name": "Failed polls" }
+      "message": {
+        "name": "Message"
+      },
+      "firmware_version": {
+        "name": "Firmware version"
+      },
+      "oem_model": {
+        "name": "Model"
+      },
+      "dsn": {
+        "name": "Device serial (DSN)"
+      },
+      "cloud_backend": {
+        "name": "Cloud backend"
+      },
+      "last_report": {
+        "name": "Last report"
+      },
+      "wifi_signal": {
+        "name": "Wi-Fi signal"
+      },
+      "last_successful_poll": {
+        "name": "Last successful poll"
+      },
+      "failed_polls": {
+        "name": "Failed polls"
+      }
     },
     "binary_sensor": {
-      "lid_open": { "name": "Lid" },
-      "probe0_plugged_in": { "name": "Probe 1 connected" },
-      "probe1_plugged_in": { "name": "Probe 2 connected" },
-      "probe0_active": { "name": "Probe 1 active" },
-      "probe1_active": { "name": "Probe 2 active" },
-      "cloud_connected": { "name": "Cloud connection" }
+      "lid_open": {
+        "name": "Lid"
+      },
+      "probe0_plugged_in": {
+        "name": "Probe 1 connected"
+      },
+      "probe1_plugged_in": {
+        "name": "Probe 2 connected"
+      },
+      "probe0_active": {
+        "name": "Probe 1 active"
+      },
+      "probe1_active": {
+        "name": "Probe 2 active"
+      },
+      "cloud_connected": {
+        "name": "Cloud connection"
+      }
     },
     "select": {
-      "cook_mode": { "name": "Cook mode" }
+      "cook_mode": {
+        "name": "Cook mode"
+      }
     },
     "number": {
-      "cook_temp": { "name": "Cook temp / heat level" },
-      "cook_duration": { "name": "Cook duration" },
-      "probe0_target_temp": { "name": "Probe 1 target temp" },
-      "probe1_target_temp": { "name": "Probe 2 target temp" }
+      "cook_temp": {
+        "name": "Cook temp / heat level"
+      },
+      "cook_duration": {
+        "name": "Cook duration"
+      },
+      "probe0_target_temp": {
+        "name": "Probe 1 target temp"
+      },
+      "probe1_target_temp": {
+        "name": "Probe 2 target temp"
+      }
     },
     "switch": {
-      "cook_smoke": { "name": "Add smoke (Woodfire)" },
-      "cook_skip_preheat": { "name": "Skip preheat" },
-      "probe0_enabled": { "name": "Probe 1 target enabled" },
-      "probe1_enabled": { "name": "Probe 2 target enabled" }
+      "cook_smoke": {
+        "name": "Add smoke (Woodfire)"
+      },
+      "cook_skip_preheat": {
+        "name": "Skip preheat"
+      },
+      "probe0_enabled": {
+        "name": "Probe 1 target enabled"
+      },
+      "probe1_enabled": {
+        "name": "Probe 2 target enabled"
+      }
     },
     "button": {
-      "start_cook": { "name": "Start cook" },
-      "stop_cook": { "name": "Stop cook" },
-      "skip_preheat": { "name": "Skip preheat" }
+      "start_cook": {
+        "name": "Start cook"
+      },
+      "stop_cook": {
+        "name": "Stop cook"
+      },
+      "skip_preheat": {
+        "name": "Skip preheat"
+      }
     }
   }
 }

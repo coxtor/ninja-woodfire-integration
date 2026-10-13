@@ -11,6 +11,7 @@ from homeassistant.config_entries import ConfigFlow, ConfigFlowResult
 from homeassistant.const import CONF_EMAIL, CONF_PASSWORD
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
+from ._lib.api import ble_proto
 from ._lib.api.ayla import AuthError, AylaCloudClient, TransportError
 from ._lib.const import REGION_DEFAULTS, make_region
 
@@ -21,6 +22,8 @@ from .const import (
     CONF_AUTH0_CLIENT_ID,
     CONF_AYLA_APP_ID,
     CONF_AYLA_APP_SECRET,
+    CONF_BLE_ADDRESS,
+    CONF_BLE_SLOTS,
     CONF_DSN,
     CONF_REGION,
     DEFAULT_REGION,
@@ -29,24 +32,31 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
-# Standard form: just the user's account info. Advanced fields are
-# optional and only show up via the "Reconfigure" / advanced flow when
-# the bundled defaults stop working.
-STEP_USER = vol.Schema(
-    {
+# Standard form shows just the account info. The six vendor-credential
+# overrides are expert escape hatches (for when the bundled defaults rotate)
+# and only appear when the user has Home Assistant's "Advanced Mode" enabled.
+_ADVANCED_FIELDS = (
+    CONF_AUTH0_AUDIENCE,
+    CONF_AUTH0_CLIENT_ID,
+    CONF_AYLA_APP_ID,
+    CONF_AYLA_APP_SECRET,
+    CONF_AWS_API_BASE,
+    CONF_AWS_API_KEY,
+)
+
+
+def _user_schema(show_advanced: bool) -> vol.Schema:
+    fields: dict[Any, Any] = {
         vol.Required(CONF_EMAIL): str,
         vol.Required(CONF_PASSWORD): str,
         vol.Optional(CONF_REGION, default=DEFAULT_REGION): vol.In(
             list(REGION_DEFAULTS.keys())
         ),
-        vol.Optional(CONF_AUTH0_AUDIENCE, default=""): str,
-        vol.Optional(CONF_AUTH0_CLIENT_ID, default=""): str,
-        vol.Optional(CONF_AYLA_APP_ID, default=""): str,
-        vol.Optional(CONF_AYLA_APP_SECRET, default=""): str,
-        vol.Optional(CONF_AWS_API_BASE, default=""): str,
-        vol.Optional(CONF_AWS_API_KEY, default=""): str,
     }
-)
+    if show_advanced:
+        for key in _ADVANCED_FIELDS:
+            fields[vol.Optional(key, default="")] = str
+    return vol.Schema(fields)
 
 
 def _opt(value: str | None) -> str | None:
@@ -63,8 +73,27 @@ class NinjaWoodfireConfigFlow(ConfigFlow, domain=DOMAIN):
     def __init__(self) -> None:
         self._user_input: dict[str, Any] | None = None
         self._devices: list[dict[str, Any]] = []
+        self._entry_data: dict[str, Any] = {}
+        self._title: str = ""
+        self._ble_address: str | None = None
+        self._ble_name: str | None = None
+
+    async def async_step_bluetooth(self, discovery_info: Any) -> ConfigFlowResult:
+        """A Woodfire grill was auto-discovered over Bluetooth -> local setup."""
+        await self.async_set_unique_id(discovery_info.address)
+        self._abort_if_unique_id_configured()
+        self._ble_address = discovery_info.address
+        self._ble_name = discovery_info.name
+        self.context["title_placeholders"] = {"name": discovery_info.name or "Ninja Woodfire"}
+        return await self.async_step_local()
 
     async def async_step_user(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Choose between a cloud account or local-only (BLE) setup."""
+        return self.async_show_menu(step_id="user", menu_options=["cloud", "local"])
+
+    async def async_step_cloud(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         errors: dict[str, str] = {}
@@ -103,8 +132,64 @@ class NinjaWoodfireConfigFlow(ConfigFlow, domain=DOMAIN):
                     return await self.async_step_pick_device()
 
         return self.async_show_form(
-            step_id="user",
-            data_schema=STEP_USER,
+            step_id="cloud",
+            data_schema=_user_schema(self.show_advanced_options),
+            errors=errors,
+        )
+
+    async def async_step_local(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Local-only setup: no cloud account, just the BLE session slots.
+
+        Identifies the grill over Bluetooth (service fcbb). Needs a local
+        Bluetooth adapter or an ESPHome Bluetooth proxy in range.
+        """
+        discovered: dict[str, str] = {}
+        try:
+            from homeassistant.components import bluetooth
+
+            from .const import BLE_SERVICE_UUID
+
+            discovered = {
+                info.address: f"{info.name or 'Woodfire'} ({info.address})"
+                for info in bluetooth.async_discovered_service_info(self.hass, connectable=True)
+                if BLE_SERVICE_UUID in (info.service_uuids or [])
+            }
+        except Exception:  # noqa: BLE001 - discovery is best-effort; address can be typed
+            discovered = {}
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            slots = (user_input.get(CONF_BLE_SLOTS) or "").strip()
+            address = (self._ble_address or user_input.get(CONF_BLE_ADDRESS) or "").strip()
+            if not address and len(discovered) == 1:
+                address = next(iter(discovered))
+            # Slots are derived from the grill's BLE address (public MAC). A
+            # pasted blob is only an optional override.
+            if slots:
+                try:
+                    ble_proto.parse_slots_blob(slots)
+                except ValueError:
+                    errors["base"] = "bad_slots"
+            if not errors and not address:
+                errors["base"] = "no_ble_device"
+            if not errors:
+                await self.async_set_unique_id(address)
+                self._abort_if_unique_id_configured()
+                data = {CONF_DSN: address, CONF_BLE_ADDRESS: address}
+                if slots:
+                    data[CONF_BLE_SLOTS] = slots
+                return self.async_create_entry(
+                    title=self._ble_name or "Ninja Woodfire (local)", data=data,
+                )
+
+        addr_field = vol.In(discovered) if discovered else str
+        return self.async_show_form(
+            step_id="local",
+            data_schema=vol.Schema({
+                vol.Optional(CONF_BLE_SLOTS, default=""): str,
+                vol.Optional(CONF_BLE_ADDRESS, default=""): addr_field,
+            }),
             errors=errors,
         )
 
@@ -139,7 +224,9 @@ class NinjaWoodfireConfigFlow(ConfigFlow, domain=DOMAIN):
                 v = _opt(self._user_input.get(key))
                 if v:
                     data[key] = v
-            return self.async_create_entry(title=title, data=data)
+            self._entry_data = data
+            self._title = title
+            return await self.async_step_ble()
 
         choices = {
             d.get("dsn", ""): f"{d.get('product_name') or d.get('oem_model') or 'Grill'} ({d.get('dsn')})"
@@ -148,6 +235,40 @@ class NinjaWoodfireConfigFlow(ConfigFlow, domain=DOMAIN):
         return self.async_show_form(
             step_id="pick_device",
             data_schema=vol.Schema({vol.Required(CONF_DSN): vol.In(choices)}),
+        )
+
+    async def async_step_ble(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Optional: enable the local BLE path by pasting the extracted slots.
+
+        Leave empty to stay cloud-only (unchanged behaviour). With slots, the
+        integration prefers local BLE (BT-proxy capable) and falls back to cloud.
+        """
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            slots = (user_input.get(CONF_BLE_SLOTS) or "").strip()
+            if not slots:
+                return self.async_create_entry(title=self._title, data=self._entry_data)
+            try:
+                ble_proto.parse_slots_blob(slots)
+            except ValueError:
+                errors["base"] = "bad_slots"
+            else:
+                data = {**self._entry_data, CONF_BLE_SLOTS: slots}
+                addr = (user_input.get(CONF_BLE_ADDRESS) or "").strip()
+                if addr:
+                    data[CONF_BLE_ADDRESS] = addr
+                return self.async_create_entry(title=self._title, data=data)
+
+        return self.async_show_form(
+            step_id="ble",
+            data_schema=vol.Schema({
+                vol.Optional(CONF_BLE_SLOTS, default=""): str,
+                vol.Optional(CONF_BLE_ADDRESS, default=""): str,
+            }),
+            errors=errors,
+            description_placeholders={"dsn": self._entry_data.get(CONF_DSN, "")},
         )
 
     async def async_step_reauth(

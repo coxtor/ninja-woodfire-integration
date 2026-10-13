@@ -76,7 +76,12 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     coordinator = entry.runtime_data
-    async_add_entities(NinjaBinarySensor(coordinator, desc) for desc in BINARY_SENSORS)
+    # "cloud_connected" is cloud-specific and misleading in local-only mode.
+    skip = {"cloud_connected"} if coordinator.client is None else set()
+    async_add_entities(
+        NinjaBinarySensor(coordinator, desc)
+        for desc in BINARY_SENSORS if desc.key not in skip
+    )
 
 
 class NinjaBinarySensor(NinjaWoodfireEntity, BinarySensorEntity):

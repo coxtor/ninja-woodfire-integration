@@ -2,6 +2,12 @@
   "config": {
     "step": {
       "user": {
+        "menu_options": {
+          "cloud": "Cloud-Konto (Online-Grill)",
+          "local": "Nur lokal — Bluetooth (ohne Cloud)"
+        }
+      },
+      "cloud": {
         "title": "Ninja Woodfire",
         "description": "Mit deinem Ninja-Kitchen-Account anmelden. Die sechs erweiterten Felder leer lassen — sie sind nur ein Fallback falls die mitgelieferten Defaults nicht mehr funktionieren. Anleitung zum selbst-Extrahieren in der Projekt-README.",
         "data": {
@@ -16,17 +22,33 @@
           "aws_api_key": "AWS-API-Schlüssel (optional)"
         }
       },
+      "pick_device": {
+        "title": "Grill auswählen",
+        "data": {
+          "dsn": "Grill"
+        }
+      },
+      "ble": {
+        "title": "Lokale Steuerung über Bluetooth (optional)",
+        "description": "Füge die Session-Slots aus dem Extraktor ein, um Grill {dsn} lokal über BLE zu steuern (läuft über ESPHome-Bluetooth-Proxys, ohne Cloud). Leer lassen = weiter nur Cloud. Die Integration bevorzugt BLE und fällt bei Bedarf automatisch auf die Cloud zurück.",
+        "data": {
+          "ble_slots": "BLE-Session-Slots (Paste-Block)",
+          "ble_address": "Bluetooth-Adresse des Grills (optional, sonst automatisch erkannt)"
+        }
+      },
+      "local": {
+        "title": "Lokale Steuerung über Bluetooth",
+        "description": "Kein Konto nötig. Der Grill wird über Bluetooth gefunden (ESPHome-Proxys funktionieren) und seine Session-Keys werden automatisch aus seiner Bluetooth-Adresse abgeleitet — nichts einzufügen. Das Slots-Feld ist nur ein optionaler Experten-Override.",
+        "data": {
+          "ble_slots": "BLE-Session-Slots (optionaler Override)",
+          "ble_address": "Bluetooth-Adresse des Grills (optional)"
+        }
+      },
       "reauth_confirm": {
         "title": "Erneut anmelden",
         "description": "Die Ninja-Cloud hat die gespeicherte Anmeldung für {email} abgelehnt. Bitte aktuelles Passwort eingeben.",
         "data": {
           "password": "Passwort"
-        }
-      },
-      "pick_device": {
-        "title": "Grill auswählen",
-        "data": {
-          "dsn": "Grill"
         }
       }
     },
@@ -34,7 +56,9 @@
       "invalid_auth": "Falsche E-Mail oder Passwort.",
       "cannot_connect": "Ninja-Cloud nicht erreichbar.",
       "no_devices": "Kein Grill in diesem Account gefunden.",
-      "unknown": "Unerwarteter Fehler."
+      "unknown": "Unerwarteter Fehler.",
+      "bad_slots": "BLE-Slots nicht lesbar. Erwartet: base64 (96 Byte) oder vier Hex-Tokens: tx_key tx_nonce rx_key rx_nonce.",
+      "no_ble_device": "Kein Woodfire-Grill über Bluetooth gefunden. Adresse eingeben oder Adapter/Proxy in Reichweite bringen."
     },
     "abort": {
       "already_configured": "Dieser Grill ist bereits eingerichtet.",
@@ -43,68 +67,169 @@
   },
   "entity": {
     "sensor": {
-      "grill_temp": { "name": "Grill-Temperatur" },
-      "air_temp": { "name": "Lufttemperatur" },
-      "smoke_temp": { "name": "Rauchtemperatur" },
-      "grill_state": { "name": "Grill-Status" },
-      "cook_state": { "name": "Kochstatus" },
-      "active_mode": { "name": "Aktiver Kochmodus" },
-      "setpoint": { "name": "Aktueller Sollwert" },
-      "seconds_left": { "name": "Restzeit (Sekunden)" },
-      "end_time": { "name": "Kochende um" },
-      "cook_progress": { "name": "Kochfortschritt" },
-      "preheat_progress": { "name": "Vorheiz-Fortschritt" },
-      "error_code": { "name": "Fehlercode" },
-      "probe0_temp": { "name": "Sonde 1 Temperatur" },
-      "probe1_temp": { "name": "Sonde 2 Temperatur" },
-      "probe0_progress": { "name": "Sonde 1 Fortschritt" },
-      "probe1_progress": { "name": "Sonde 2 Fortschritt" },
-      "probe0_setpoint": { "name": "Sonde 1 Zieltemp (aktiv)" },
-      "probe1_setpoint": { "name": "Sonde 2 Zieltemp (aktiv)" },
-      "probe0_state": { "name": "Sonde 1 Status" },
-      "probe1_state": { "name": "Sonde 2 Status" },
-      "event_mask": { "name": "Event-Maske" },
+      "grill_temp": {
+        "name": "Grill-Temperatur"
+      },
+      "air_temp": {
+        "name": "Lufttemperatur"
+      },
+      "smoke_temp": {
+        "name": "Rauchtemperatur"
+      },
+      "grill_state": {
+        "name": "Grill-Status"
+      },
+      "cook_state": {
+        "name": "Kochstatus"
+      },
+      "active_mode": {
+        "name": "Aktiver Kochmodus"
+      },
+      "setpoint": {
+        "name": "Aktueller Sollwert"
+      },
+      "seconds_left": {
+        "name": "Restzeit (Sekunden)"
+      },
+      "end_time": {
+        "name": "Kochende um"
+      },
+      "cook_progress": {
+        "name": "Kochfortschritt"
+      },
+      "preheat_progress": {
+        "name": "Vorheiz-Fortschritt"
+      },
+      "error_code": {
+        "name": "Fehlercode"
+      },
+      "probe0_temp": {
+        "name": "Sonde 1 Temperatur"
+      },
+      "probe1_temp": {
+        "name": "Sonde 2 Temperatur"
+      },
+      "probe0_progress": {
+        "name": "Sonde 1 Fortschritt"
+      },
+      "probe1_progress": {
+        "name": "Sonde 2 Fortschritt"
+      },
+      "probe0_setpoint": {
+        "name": "Sonde 1 Zieltemp (aktiv)"
+      },
+      "probe1_setpoint": {
+        "name": "Sonde 2 Zieltemp (aktiv)"
+      },
+      "probe0_state": {
+        "name": "Sonde 1 Status"
+      },
+      "probe1_state": {
+        "name": "Sonde 2 Status"
+      },
+      "event_mask": {
+        "name": "Event-Maske"
+      },
       "prompt": {
         "name": "Hinweis",
-        "state": { "addfood": "Lebensmittel hinzufügen", "flipfood": "Lebensmittel wenden", "done": "Fertig", "getfood": "Lebensmittel herausnehmen" }
+        "state": {
+          "addfood": "Lebensmittel hinzufügen",
+          "flipfood": "Lebensmittel wenden",
+          "done": "Fertig",
+          "getfood": "Lebensmittel herausnehmen"
+        }
       },
-      "message": { "name": "Nachricht" },
-      "firmware_version": { "name": "Firmware-Version" },
-      "oem_model": { "name": "Modell" },
-      "dsn": { "name": "Geräte-Seriennr. (DSN)" },
-      "cloud_backend": { "name": "Cloud-Backend" },
-      "last_report": { "name": "Letzte Meldung" },
-      "wifi_signal": { "name": "WLAN-Signal" },
-      "last_successful_poll": { "name": "Letzte erfolgreiche Abfrage" },
-      "failed_polls": { "name": "Fehlgeschlagene Abfragen" }
+      "message": {
+        "name": "Nachricht"
+      },
+      "firmware_version": {
+        "name": "Firmware-Version"
+      },
+      "oem_model": {
+        "name": "Modell"
+      },
+      "dsn": {
+        "name": "Geräte-Seriennr. (DSN)"
+      },
+      "cloud_backend": {
+        "name": "Cloud-Backend"
+      },
+      "last_report": {
+        "name": "Letzte Meldung"
+      },
+      "wifi_signal": {
+        "name": "WLAN-Signal"
+      },
+      "last_successful_poll": {
+        "name": "Letzte erfolgreiche Abfrage"
+      },
+      "failed_polls": {
+        "name": "Fehlgeschlagene Abfragen"
+      }
     },
     "binary_sensor": {
-      "lid_open": { "name": "Deckel" },
-      "probe0_plugged_in": { "name": "Sonde 1 angeschlossen" },
-      "probe1_plugged_in": { "name": "Sonde 2 angeschlossen" },
-      "probe0_active": { "name": "Sonde 1 aktiv" },
-      "probe1_active": { "name": "Sonde 2 aktiv" },
-      "cloud_connected": { "name": "Cloud-Verbindung" }
+      "lid_open": {
+        "name": "Deckel"
+      },
+      "probe0_plugged_in": {
+        "name": "Sonde 1 angeschlossen"
+      },
+      "probe1_plugged_in": {
+        "name": "Sonde 2 angeschlossen"
+      },
+      "probe0_active": {
+        "name": "Sonde 1 aktiv"
+      },
+      "probe1_active": {
+        "name": "Sonde 2 aktiv"
+      },
+      "cloud_connected": {
+        "name": "Cloud-Verbindung"
+      }
     },
     "select": {
-      "cook_mode": { "name": "Kochmodus" }
+      "cook_mode": {
+        "name": "Kochmodus"
+      }
     },
     "number": {
-      "cook_temp": { "name": "Temperatur / Heizstufe" },
-      "cook_duration": { "name": "Kochzeit" },
-      "probe0_target_temp": { "name": "Sonde 1 Zieltemp" },
-      "probe1_target_temp": { "name": "Sonde 2 Zieltemp" }
+      "cook_temp": {
+        "name": "Temperatur / Heizstufe"
+      },
+      "cook_duration": {
+        "name": "Kochzeit"
+      },
+      "probe0_target_temp": {
+        "name": "Sonde 1 Zieltemp"
+      },
+      "probe1_target_temp": {
+        "name": "Sonde 2 Zieltemp"
+      }
     },
     "switch": {
-      "cook_smoke": { "name": "Rauch hinzufügen (Woodfire)" },
-      "cook_skip_preheat": { "name": "Vorheizen überspringen" },
-      "probe0_enabled": { "name": "Sonde 1 Ziel aktiv" },
-      "probe1_enabled": { "name": "Sonde 2 Ziel aktiv" }
+      "cook_smoke": {
+        "name": "Rauch hinzufügen (Woodfire)"
+      },
+      "cook_skip_preheat": {
+        "name": "Vorheizen überspringen"
+      },
+      "probe0_enabled": {
+        "name": "Sonde 1 Ziel aktiv"
+      },
+      "probe1_enabled": {
+        "name": "Sonde 2 Ziel aktiv"
+      }
     },
     "button": {
-      "start_cook": { "name": "Cook starten" },
-      "stop_cook": { "name": "Cook stoppen" },
-      "skip_preheat": { "name": "Vorheizen überspringen" }
+      "start_cook": {
+        "name": "Cook starten"
+      },
+      "stop_cook": {
+        "name": "Cook stoppen"
+      },
+      "skip_preheat": {
+        "name": "Vorheizen überspringen"
+      }
     }
   }
 }

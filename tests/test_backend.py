@@ -122,10 +122,12 @@ async def test_user_flow_stores_aws_overrides(hass):
     with patch("custom_components.ninja_woodfire.config_flow.AylaCloudClient", return_value=_ayla()), \
          patch("custom_components.ninja_woodfire.async_setup_entry", return_value=True):
         r = await hass.config_entries.flow.async_init(DOMAIN, context={"source": config_entries.SOURCE_USER})
+        r = await hass.config_entries.flow.async_configure(r["flow_id"], {"next_step_id": "cloud"})
         r = await hass.config_entries.flow.async_configure(r["flow_id"], {
             "email": "a@b.c", "password": "x", "aws_api_base": " https://aws.invalid ", "aws_api_key": "",
         })
         r = await hass.config_entries.flow.async_configure(r["flow_id"], {"dsn": DSN})
+        r = await hass.config_entries.flow.async_configure(r["flow_id"], {"ble_slots": ""})
     assert r["result"].data["aws_api_base"] == "https://aws.invalid"
     assert "aws_api_key" not in r["result"].data
 
@@ -246,3 +248,48 @@ async def test_failed_first_aws_lookup_is_retried_after_a_minute(hass, entry, fr
     freezer.tick(600)
     await coordinator.async_refresh()
     assert coordinator.backend == "aws"
+
+
+async def test_ble_is_preferred_when_configured(hass, entry):
+    from unittest.mock import AsyncMock
+    from custom_components.ninja_woodfire.coordinator import NinjaWoodfireCoordinator
+    from custom_components.ninja_woodfire._lib.capabilities import WOODFIRE_PRO_XL
+
+    client = AsyncMock()
+    ble = AsyncMock()
+    ble.get_combined_state.return_value = mk_state()
+    c = NinjaWoodfireCoordinator(hass, entry, client, DSN, WOODFIRE_PRO_XL, 42, ble=ble)
+    await c._async_update_data()
+    assert c.backend == "ble"
+    client.get_combined_state.assert_not_called()
+
+
+async def test_ble_failure_falls_back_to_cloud(hass, entry):
+    from unittest.mock import AsyncMock
+    from custom_components.ninja_woodfire.coordinator import NinjaWoodfireCoordinator
+    from custom_components.ninja_woodfire._lib.api.errors import TransportError
+    from custom_components.ninja_woodfire._lib.capabilities import WOODFIRE_PRO_XL
+
+    client = AsyncMock()
+    client.get_combined_state.return_value = mk_state()
+    ble = AsyncMock()
+    ble.get_combined_state.side_effect = TransportError("out of range")
+    c = NinjaWoodfireCoordinator(hass, entry, client, DSN, WOODFIRE_PRO_XL, 42, ble=ble)
+    await c._async_update_data()
+    assert c.backend == "ayla"
+    client.get_combined_state.assert_awaited()
+
+
+async def test_local_only_coordinator_has_no_cloud(hass, entry):
+    from unittest.mock import AsyncMock
+    from custom_components.ninja_woodfire.coordinator import NinjaWoodfireCoordinator
+    from custom_components.ninja_woodfire._lib.capabilities import WOODFIRE_PRO_XL
+    from homeassistant.exceptions import HomeAssistantError
+
+    ble = AsyncMock()
+    ble.get_combined_state.return_value = mk_state()
+    c = NinjaWoodfireCoordinator(hass, entry, None, DSN, WOODFIRE_PRO_XL, 0, ble=ble)
+    await c._async_update_data()
+    assert c.backend == "ble"
+    with pytest.raises(HomeAssistantError):
+        await c.async_set_grill_name("Patio")

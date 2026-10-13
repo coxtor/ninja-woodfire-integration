@@ -7,6 +7,8 @@
   "codeowners": ["@coxtor"],
   "config_flow": true,
   "iot_class": "cloud_polling",
-  "requirements": ["aiohttp>=3.9.0"],
+  "after_dependencies": ["bluetooth_adapters"],
+  "bluetooth": [{ "service_uuid": "0000fcbb-0000-1000-8000-00805f9b34fb" }],
+  "requirements": ["aiohttp>=3.9.0", "bleak-retry-connector>=3.5.0"],
   "integration_type": "device"
 }

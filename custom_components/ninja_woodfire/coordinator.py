@@ -51,6 +51,8 @@ _MIN_REMAINING_S = 60
 _AWS_RECHECK_S = 600
 # How soon a failed first AWS lookup is retried.
 _AWS_RETRY_S = 60
+# How long to stay on cloud after a BLE failure before retrying the local link.
+_BLE_RETRY_S = 60
 
 type NinjaWoodfireConfigEntry = ConfigEntry[NinjaWoodfireCoordinator]
 
@@ -72,12 +74,13 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
         self,
         hass: HomeAssistant,
         config_entry: ConfigEntry,
-        client: AylaCloudClient,
+        client: AylaCloudClient | None,
         dsn: str,
         capabilities: GrillCapabilities,
         device_key: int,
         device_info_extra: dict[str, str] | None = None,
         aws: AwsCloudClient | None = None,
+        ble: GrillTransport | None = None,
     ) -> None:
         super().__init__(
             hass,
@@ -90,7 +93,12 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
         # `transport`, which follows the backend the grill is connected to.
         self.client = client
         self.aws = aws
-        self.transport: GrillTransport = client
+        # Local BLE is preferred when configured; cloud (Ayla/AWS) is the fallback.
+        self.ble = ble
+        self.transport: GrillTransport = ble or client
+        # Real grill serial (DSN) learned from BLE grill-info; falls back to dsn.
+        self.grill_serial: str | None = None
+        self._ble_recheck_at = 0.0
         self._aws_reached = False
         self._aws_failed = False
         self._backend_check_at = 0.0
@@ -128,9 +136,24 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
     # ------------------------------------------------------------------ polling
 
     async def _async_update_data(self) -> CombinedState:
+        # Prefer local BLE when configured; drop to cloud on failure and retry
+        # BLE periodically. The cloud ayla<->aws switch runs only on cloud polls.
+        if self.ble is not None and self.transport is not self.ble \
+                and time.monotonic() >= self._ble_recheck_at:
+            self.transport = self.ble
         try:
-            state = await self.transport.get_combined_state(self.dsn)
-            if self._should_switch(state):
+            try:
+                state = await self.transport.get_combined_state(self.dsn)
+            except TransportError:
+                # Fall back to the cloud only if we have a cloud client.
+                if self.transport is self.ble and self.client is not None:
+                    self._ble_recheck_at = time.monotonic() + _BLE_RETRY_S
+                    _LOGGER.info("Grill %s BLE unavailable; using cloud", self.dsn)
+                    self.transport = self.client
+                    state = await self.transport.get_combined_state(self.dsn)
+                else:
+                    raise
+            if self.transport is not self.ble and self._should_switch(state):
                 switch = self._try_ayla if self.backend == "aws" else self._try_aws
                 state = await switch(state)
         except AuthError as err:
@@ -166,6 +189,8 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
 
     @property
     def backend(self) -> str:
+        if self.ble is not None and self.transport is self.ble:
+            return "ble"
         return "ayla" if self.transport is self.client else "aws"
 
     def _should_switch(self, state: CombinedState) -> bool:
@@ -440,6 +465,8 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
 
     async def async_set_property(self, name: str, value) -> None:
         """Write a settable cloud property."""
+        if self.client is None:
+            raise HomeAssistantError("Not available in local-only (BLE) mode")
         await self._command(self.client.set_property_datapoint(self.dsn, name, value))
         await self._burst_refresh()
 
@@ -492,6 +519,8 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
         await self._burst_refresh()
 
     async def async_set_grill_name(self, new_name: str) -> None:
+        if self.client is None:
+            raise HomeAssistantError("Renaming needs a cloud account (local-only mode)")
         await self._command(self.client.set_grill_name(self.dsn, new_name))
         await self._burst_refresh()
 

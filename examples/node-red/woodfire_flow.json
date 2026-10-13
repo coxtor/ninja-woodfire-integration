@@ -1,0 +1,513 @@
+[
+    {
+        "id": "woodfire_tab",
+        "type": "tab",
+        "label": "Ninja Woodfire",
+        "disabled": false,
+        "info": "Push-Benachrichtigungen für die Ninja-Woodfire-Integration.\n\nDer Node **Notify** ist eine Instanz des Subflows „Nofify“ (Notify-Contract: to, title, message, icon, channel, persistent, sticky, extraData). Bei anderem Notify-Node einfach ersetzen.\n\nMit den Test-Injects unten jede Benachrichtigung ausprobieren."
+    },
+    {
+        "id": "woodfire_setup_comment",
+        "type": "comment",
+        "z": "woodfire_tab",
+        "name": "① Ausgang: dein Notify-Subflow (ggf. ersetzen) → Deploy",
+        "info": "",
+        "x": 230,
+        "y": 40,
+        "wires": []
+    },
+    {
+        "id": "woodfire_cook_started",
+        "type": "server-events",
+        "name": "🔥 Cook Started",
+        "server": "",
+        "version": 3,
+        "eventType": "ninja_woodfire_cook_started",
+        "eventData": "",
+        "waitForRunning": true,
+        "outputProperties": [
+            {
+                "property": "payload",
+                "propertyType": "msg",
+                "value": "",
+                "valueType": "eventData"
+            }
+        ],
+        "x": 190,
+        "y": 100,
+        "wires": [
+            [
+                "woodfire_notify"
+            ]
+        ],
+        "z": "woodfire_tab"
+    },
+    {
+        "id": "woodfire_preheat_complete",
+        "type": "server-events",
+        "name": "✅ Preheat Complete",
+        "server": "",
+        "version": 3,
+        "eventType": "ninja_woodfire_preheat_complete",
+        "eventData": "",
+        "waitForRunning": true,
+        "outputProperties": [
+            {
+                "property": "payload",
+                "propertyType": "msg",
+                "value": "",
+                "valueType": "eventData"
+            }
+        ],
+        "x": 190,
+        "y": 150,
+        "wires": [
+            [
+                "woodfire_notify"
+            ]
+        ],
+        "z": "woodfire_tab"
+    },
+    {
+        "id": "woodfire_halftime",
+        "type": "server-events",
+        "name": "⏱️ Cook Halftime",
+        "server": "",
+        "version": 3,
+        "eventType": "ninja_woodfire_cook_halftime",
+        "eventData": "",
+        "waitForRunning": true,
+        "outputProperties": [
+            {
+                "property": "payload",
+                "propertyType": "msg",
+                "value": "",
+                "valueType": "eventData"
+            }
+        ],
+        "x": 190,
+        "y": 200,
+        "wires": [
+            [
+                "woodfire_notify"
+            ]
+        ],
+        "z": "woodfire_tab"
+    },
+    {
+        "id": "woodfire_probe_halfway",
+        "type": "server-events",
+        "name": "🌡️ Probe Halfway",
+        "server": "",
+        "version": 3,
+        "eventType": "ninja_woodfire_probe_halfway",
+        "eventData": "",
+        "waitForRunning": true,
+        "outputProperties": [
+            {
+                "property": "payload",
+                "propertyType": "msg",
+                "value": "",
+                "valueType": "eventData"
+            }
+        ],
+        "x": 190,
+        "y": 250,
+        "wires": [
+            [
+                "woodfire_notify"
+            ]
+        ],
+        "z": "woodfire_tab"
+    },
+    {
+        "id": "woodfire_probe_target",
+        "type": "server-events",
+        "name": "✅ Probe Target Reached",
+        "server": "",
+        "version": 3,
+        "eventType": "ninja_woodfire_probe_target_reached",
+        "eventData": "",
+        "waitForRunning": true,
+        "outputProperties": [
+            {
+                "property": "payload",
+                "propertyType": "msg",
+                "value": "",
+                "valueType": "eventData"
+            }
+        ],
+        "x": 190,
+        "y": 300,
+        "wires": [
+            [
+                "woodfire_notify"
+            ]
+        ],
+        "z": "woodfire_tab"
+    },
+    {
+        "id": "woodfire_cook_done",
+        "type": "server-events",
+        "name": "🎉 Cook Done",
+        "server": "",
+        "version": 3,
+        "eventType": "ninja_woodfire_cook_done",
+        "eventData": "",
+        "waitForRunning": true,
+        "outputProperties": [
+            {
+                "property": "payload",
+                "propertyType": "msg",
+                "value": "",
+                "valueType": "eventData"
+            }
+        ],
+        "x": 190,
+        "y": 350,
+        "wires": [
+            [
+                "woodfire_notify"
+            ]
+        ],
+        "z": "woodfire_tab"
+    },
+    {
+        "id": "woodfire_prompt",
+        "type": "server-events",
+        "name": "🔔 Prompt (Add/Flip Food)",
+        "server": "",
+        "version": 3,
+        "eventType": "ninja_woodfire_prompt",
+        "eventData": "",
+        "waitForRunning": true,
+        "outputProperties": [
+            {
+                "property": "payload",
+                "propertyType": "msg",
+                "value": "",
+                "valueType": "eventData"
+            }
+        ],
+        "x": 190,
+        "y": 400,
+        "wires": [
+            [
+                "woodfire_notify"
+            ]
+        ],
+        "z": "woodfire_tab"
+    },
+    {
+        "id": "woodfire_notify",
+        "type": "function",
+        "z": "woodfire_tab",
+        "name": "Woodfire event → notification payload",
+        "func": "// Output follows the Notify subflow contract: to, title, message, icon, channel,\n// persistent, sticky, extraData (tag, color, group, progress, chronometer, ...).\nconst MODES = {\n    grill: 'Grillen', smoker: 'Smoker', bake: 'Backen', roast: 'Braten',\n    broil: 'Überbacken', dehydrate: 'Dörren', reheat: 'Aufwärmen',\n    'air crisp': 'Heißluft', griddle: 'Grillplatte',\n};\nconst TAG = 'woodfire_progress';\nconst probeTag = (i) => `woodfire_probe${i}`;\n\nconst ev = msg.payload.event || {};\nconst type = msg.payload.event_type || msg.topic;\nconst now = Math.floor(Date.now() / 1000);\nconst mins = (s) => Math.max(0, Math.round((s || 0) / 60));\nconst probeName = (i) => `Probe ${(i || 0) + 1}`;\n\n// Grill mode reports the firmware's internal °C target; show the heat level instead.\nfunction target() {\n    const sp = ev.setpoint;\n    if (sp === undefined || sp === null) return '';\n    if (ev.mode !== 'grill') return ` bei ${sp}°C`;\n    const level = sp <= 3 ? sp : sp < 175 ? 1 : sp < 215 ? 2 : 3;\n    return ` · ${['Niedrig', 'Mittel', 'Hoch'][level - 1]}`;\n}\nconst label = () => (MODES[ev.mode] || ev.mode || 'Garen') + target();\n\nfunction note(title, message, opts) {\n    // Generic HA notify payload. The `data` keys follow the companion-app\n    // (mobile_app) notification conventions: tag, color, group, channel,\n    // sticky, chronometer, when, alert_once, progress, progress_max.\n    const { icon = 'mdi:grill', persistent = false, sticky = false, ...extra } = opts;\n    return {\n        title, message,\n        data: { group: 'woodfire_cook', channel: 'woodfire', sticky,\n                notification_icon: icon, ...extra },\n    };\n}\n// clear_notification is a mobile_app feature: it dismisses a tagged notification.\nconst clear = (tag) => ({ message: 'clear_notification', data: { tag } });\n\nfunction build() {\n    switch (type) {\n        case 'ninja_woodfire_cook_started':\n            return [note('🔥 Grill gestartet',\n                `${label()} · ${mins(ev.seconds_set)} Min${ev.smoke ? ' · 🌲 Rauch' : ''}\\nVorheizen läuft…`,\n                { color: '#ff6b35', tag: TAG, persistent: true, sticky: true, alert_once: true,\n                  progress: -1, chronometer: true, when: now })];\n        case 'ninja_woodfire_preheat_complete':\n            // The cook timer starts once preheat ends: count down to the end.\n            return [note('✅ Vorheizen abgeschlossen', `${label()}\\nJetzt Grillgut auflegen!`,\n                { color: '#4caf50', tag: TAG, persistent: true, sticky: true, alert_once: false,\n                  ...(ev.seconds_set ? { chronometer: true, when: now + ev.seconds_set } : {}) })];\n        case 'ninja_woodfire_cook_halftime':\n            return [note('⏱️ Halbzeit', `Noch ${mins(ev.seconds_left)} Min · Zeit zum Wenden?`,\n                { color: '#ff9800', tag: TAG, persistent: true, sticky: true, alert_once: false,\n                  progress: (ev.seconds_set || 0) - (ev.seconds_left || 0), progress_max: ev.seconds_set || 1,\n                  chronometer: true, when: now + (ev.seconds_left || 0) })];\n        case 'ninja_woodfire_probe_halfway': {\n            const current = Math.round(ev.current || 0);\n            return [note(`🌡️ ${probeName(ev.probe_index)} auf halbem Weg`,\n                `${current}°C von ${ev.target}°C · noch ${Math.max(0, ev.target - current)}°C`,\n                { icon: 'mdi:thermometer', color: '#2196f3', tag: probeTag(ev.probe_index),\n                  persistent: true, sticky: true, alert_once: false,\n                  progress: current, progress_max: ev.target || 1 })];\n        }\n        case 'ninja_woodfire_probe_target_reached':\n            return [note(`✅ ${probeName(ev.probe_index)} fertig`,\n                `Zieltemperatur ${ev.target}°C erreicht 🎯 (aktuell ${Math.round(ev.current || 0)}°C)`,\n                { icon: 'mdi:check-circle', color: '#4caf50', tag: probeTag(ev.probe_index) })];\n        case 'ninja_woodfire_cook_done': {\n            const done = ev.reason !== 'stopped';\n            // Replace the progress notification and clear leftover probe progress.\n            return [\n                note(done ? '🎉 Grill fertig' : '⏹️ Grill gestoppt',\n                    done ? 'Fertig gegrillt! Guten Appetit 🍖' : 'Der Garvorgang wurde beendet.',\n                    { color: done ? '#4caf50' : '#ff9800', tag: TAG }),\n                clear(probeTag(0)),\n                clear(probeTag(1)),\n            ];\n        }\n        case 'ninja_woodfire_prompt': {\n            const PROMPTS = {\n                addfood: ['\\ud83c\\udf57 Grillgut auflegen', 'Vorheizen fertig \\u2014 jetzt auflegen!'],\n                flipfood: ['\\ud83d\\udd04 Wenden', 'Zeit zum Wenden des Grillguts.'],\n                getfood: ['\\ud83c\\udf7d\\ufe0f Entnehmen', 'Grillgut entnehmen.'],\n                closelid: ['\\ud83d\\udd3d Deckel schlie\\u00dfen', 'Bitte den Deckel schlie\\u00dfen.'],\n                done: ['\\u2705 Fertig', 'Garvorgang abgeschlossen.'],\n            };\n            const pr = PROMPTS[ev.prompt] || [`Hinweis: ${ev.prompt}`, ''];\n            return [note(pr[0], pr[1], { icon: 'mdi:bell-ring', color: '#ff9800',\n                tag: 'woodfire_prompt', persistent: true, sticky: true })];\n        }\n        default:\n            return [];\n    }\n}\n\nconst msgs = build();\n// Emit one message per notification on the single output.\nreturn msgs.length ? [msgs.map((m) => ({ ...msg, payload: m }))] : null;\n",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 500,
+        "y": 225,
+        "wires": [
+            [
+                "woodfire_notify_out",
+                "woodfire_debug"
+            ]
+        ]
+    },
+    {
+        "id": "woodfire_debug",
+        "type": "debug",
+        "z": "woodfire_tab",
+        "name": "Debug",
+        "active": false,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 740,
+        "y": 260,
+        "wires": []
+    },
+    {
+        "id": "woodfire_test_comment",
+        "type": "comment",
+        "z": "woodfire_tab",
+        "name": "② Tests: Inject drücken → Benachrichtigung aufs Handy",
+        "info": "",
+        "x": 260,
+        "y": 420,
+        "wires": []
+    },
+    {
+        "id": "test_inject_cook_started",
+        "type": "inject",
+        "name": "TEST: 🔥 Cook Started",
+        "props": [
+            {
+                "p": "payload",
+                "v": "{\"event_type\": \"ninja_woodfire_cook_started\", \"event\": {\"dsn\": \"AC000W0XXXXXXXX\", \"mode\": \"grill\", \"setpoint\": 230, \"seconds_set\": 1800, \"smoke\": true}}",
+                "vt": "json"
+            }
+        ],
+        "repeat": "",
+        "crontab": "",
+        "once": false,
+        "onceDelay": 0.1,
+        "topic": "",
+        "x": 190,
+        "y": 470,
+        "wires": [
+            [
+                "woodfire_notify"
+            ]
+        ],
+        "z": "woodfire_tab"
+    },
+    {
+        "id": "test_inject_preheat",
+        "type": "inject",
+        "name": "TEST: ✅ Preheat Complete",
+        "props": [
+            {
+                "p": "payload",
+                "v": "{\"event_type\": \"ninja_woodfire_preheat_complete\", \"event\": {\"dsn\": \"AC000W0XXXXXXXX\", \"mode\": \"grill\", \"setpoint\": 230, \"seconds_set\": 1800}}",
+                "vt": "json"
+            }
+        ],
+        "repeat": "",
+        "crontab": "",
+        "once": false,
+        "onceDelay": 0.1,
+        "topic": "",
+        "x": 190,
+        "y": 515,
+        "wires": [
+            [
+                "woodfire_notify"
+            ]
+        ],
+        "z": "woodfire_tab"
+    },
+    {
+        "id": "test_inject_halftime",
+        "type": "inject",
+        "name": "TEST: ⏱️ Cook Halftime",
+        "props": [
+            {
+                "p": "payload",
+                "v": "{\"event_type\": \"ninja_woodfire_cook_halftime\", \"event\": {\"dsn\": \"AC000W0XXXXXXXX\", \"mode\": \"grill\", \"setpoint\": 230, \"seconds_left\": 900, \"seconds_set\": 1800}}",
+                "vt": "json"
+            }
+        ],
+        "repeat": "",
+        "crontab": "",
+        "once": false,
+        "onceDelay": 0.1,
+        "topic": "",
+        "x": 190,
+        "y": 560,
+        "wires": [
+            [
+                "woodfire_notify"
+            ]
+        ],
+        "z": "woodfire_tab"
+    },
+    {
+        "id": "test_inject_probe_halfway",
+        "type": "inject",
+        "name": "TEST: 🌡️ Probe Halfway (1)",
+        "props": [
+            {
+                "p": "payload",
+                "v": "{\"event_type\": \"ninja_woodfire_probe_halfway\", \"event\": {\"dsn\": \"AC000W0XXXXXXXX\", \"probe_index\": 0, \"target\": 60, \"halfway\": 30, \"current\": 32}}",
+                "vt": "json"
+            }
+        ],
+        "repeat": "",
+        "crontab": "",
+        "once": false,
+        "onceDelay": 0.1,
+        "topic": "",
+        "x": 190,
+        "y": 605,
+        "wires": [
+            [
+                "woodfire_notify"
+            ]
+        ],
+        "z": "woodfire_tab"
+    },
+    {
+        "id": "test_inject_probe_halfway2",
+        "type": "inject",
+        "name": "TEST: 🌡️ Probe Halfway (2)",
+        "props": [
+            {
+                "p": "payload",
+                "v": "{\"event_type\": \"ninja_woodfire_probe_halfway\", \"event\": {\"dsn\": \"AC000W0XXXXXXXX\", \"probe_index\": 1, \"target\": 70, \"halfway\": 35, \"current\": 38}}",
+                "vt": "json"
+            }
+        ],
+        "repeat": "",
+        "crontab": "",
+        "once": false,
+        "onceDelay": 0.1,
+        "topic": "",
+        "x": 190,
+        "y": 650,
+        "wires": [
+            [
+                "woodfire_notify"
+            ]
+        ],
+        "z": "woodfire_tab"
+    },
+    {
+        "id": "test_inject_probe_target",
+        "type": "inject",
+        "name": "TEST: ✅ Probe Target (1)",
+        "props": [
+            {
+                "p": "payload",
+                "v": "{\"event_type\": \"ninja_woodfire_probe_target_reached\", \"event\": {\"dsn\": \"AC000W0XXXXXXXX\", \"probe_index\": 0, \"target\": 60, \"current\": 61}}",
+                "vt": "json"
+            }
+        ],
+        "repeat": "",
+        "crontab": "",
+        "once": false,
+        "onceDelay": 0.1,
+        "topic": "",
+        "x": 490,
+        "y": 470,
+        "wires": [
+            [
+                "woodfire_notify"
+            ]
+        ],
+        "z": "woodfire_tab"
+    },
+    {
+        "id": "test_inject_probe_target2",
+        "type": "inject",
+        "name": "TEST: ✅ Probe Target (2)",
+        "props": [
+            {
+                "p": "payload",
+                "v": "{\"event_type\": \"ninja_woodfire_probe_target_reached\", \"event\": {\"dsn\": \"AC000W0XXXXXXXX\", \"probe_index\": 1, \"target\": 70, \"current\": 72}}",
+                "vt": "json"
+            }
+        ],
+        "repeat": "",
+        "crontab": "",
+        "once": false,
+        "onceDelay": 0.1,
+        "topic": "",
+        "x": 490,
+        "y": 515,
+        "wires": [
+            [
+                "woodfire_notify"
+            ]
+        ],
+        "z": "woodfire_tab"
+    },
+    {
+        "id": "test_inject_done",
+        "type": "inject",
+        "name": "TEST: 🎉 Cook Done",
+        "props": [
+            {
+                "p": "payload",
+                "v": "{\"event_type\": \"ninja_woodfire_cook_done\", \"event\": {\"dsn\": \"AC000W0XXXXXXXX\", \"mode\": \"grill\", \"setpoint\": 230, \"reason\": \"done\"}}",
+                "vt": "json"
+            }
+        ],
+        "repeat": "",
+        "crontab": "",
+        "once": false,
+        "onceDelay": 0.1,
+        "topic": "",
+        "x": 490,
+        "y": 560,
+        "wires": [
+            [
+                "woodfire_notify"
+            ]
+        ],
+        "z": "woodfire_tab"
+    },
+    {
+        "id": "test_inject_stopped",
+        "type": "inject",
+        "name": "TEST: ⏹️ Cook Stopped",
+        "props": [
+            {
+                "p": "payload",
+                "v": "{\"event_type\": \"ninja_woodfire_cook_done\", \"event\": {\"dsn\": \"AC000W0XXXXXXXX\", \"mode\": \"grill\", \"setpoint\": 230, \"reason\": \"stopped\"}}",
+                "vt": "json"
+            }
+        ],
+        "repeat": "",
+        "crontab": "",
+        "once": false,
+        "onceDelay": 0.1,
+        "topic": "",
+        "x": 490,
+        "y": 605,
+        "wires": [
+            [
+                "woodfire_notify"
+            ]
+        ],
+        "z": "woodfire_tab"
+    },
+    {
+        "id": "woodfire_notify_out",
+        "type": "api-call-service",
+        "name": "Notify (notify.notify)",
+        "server": "",
+        "version": 5,
+        "debugenabled": false,
+        "action": "notify.notify",
+        "floorId": [],
+        "areaId": [],
+        "deviceId": [],
+        "entityId": [],
+        "labelId": [],
+        "domain": "notify",
+        "service": "notify",
+        "data": "payload",
+        "dataType": "msg",
+        "mergeContext": "",
+        "mustacheAltTags": false,
+        "outputProperties": [],
+        "queue": "none",
+        "blockInputOverrides": true,
+        "x": 560,
+        "y": 240,
+        "z": "woodfire_tab",
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "woodfire_setup_comment",
+        "type": "comment",
+        "z": "woodfire_tab",
+        "name": "⚙ Setup: Server + Notify anpassen",
+        "info": "1) In jedem Node den Home-Assistant-Server auswählen (eigener Server).\n2) Notify-Node: 'notify.notify' auf deinen Dienst ändern, z.B. notify.mobile_app_<deinhandy> (für Progress/Tag/Chronometer braucht es die Companion-App).\n3) Die Funktion liefert {title, message, data:{tag,color,group,channel,sticky,chronometer,...}}\n   -> mobile_app-Konventionen. 'clear_notification' löscht eine getaggte Meldung.\n4) Events kommen von der Integration (ninja_woodfire_*). Keine Entities/DSN nötig.",
+        "x": 230,
+        "y": 40,
+        "wires": []
+    }
+]

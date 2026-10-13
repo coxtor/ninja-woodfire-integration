@@ -55,9 +55,12 @@ async def test_user_flow(hass):
     with patch("custom_components.ninja_woodfire.config_flow.AylaCloudClient", return_value=_client()), \
          patch("custom_components.ninja_woodfire.async_setup_entry", return_value=True):
         r = await hass.config_entries.flow.async_init(DOMAIN, context={"source": config_entries.SOURCE_USER})
+        r = await hass.config_entries.flow.async_configure(r["flow_id"], {"next_step_id": "cloud"})
         r = await hass.config_entries.flow.async_configure(r["flow_id"], {"email": "a@b.c", "password": "x"})
         assert r["step_id"] == "pick_device"
         r = await hass.config_entries.flow.async_configure(r["flow_id"], {"dsn": DSN})
+        assert r["step_id"] == "ble"
+        r = await hass.config_entries.flow.async_configure(r["flow_id"], {"ble_slots": ""})
     assert r["type"] is FlowResultType.CREATE_ENTRY
     assert r["result"].unique_id == DSN
 
@@ -87,3 +90,19 @@ async def test_reauth_flow_unexpected_error(hass, entry):
         r = await entry.start_reauth_flow(hass)
         r = await hass.config_entries.flow.async_configure(r["flow_id"], {"password": "x"})
     assert r["errors"] == {"base": "unknown"}
+
+
+async def test_local_only_flow_without_cloud(hass):
+    import base64
+    blob = base64.b64encode(bytes(96)).decode()
+    r = await hass.config_entries.flow.async_init(DOMAIN, context={"source": config_entries.SOURCE_USER})
+    r = await hass.config_entries.flow.async_configure(r["flow_id"], {"next_step_id": "local"})
+    assert r["step_id"] == "local"
+    with patch("custom_components.ninja_woodfire.async_setup_entry", return_value=True):
+        r = await hass.config_entries.flow.async_configure(
+            r["flow_id"], {"ble_slots": blob, "ble_address": "AA:BB:CC:DD:EE:FF"}
+        )
+    assert r["type"] is FlowResultType.CREATE_ENTRY
+    assert r["result"].unique_id == "AA:BB:CC:DD:EE:FF"
+    assert "email" not in r["result"].data
+    assert r["result"].data["ble_slots"] == blob

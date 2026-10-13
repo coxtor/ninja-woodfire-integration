@@ -25,6 +25,11 @@ CONF_AYLA_APP_ID = "ayla_app_id"
 CONF_AYLA_APP_SECRET = "ayla_app_secret"
 CONF_AWS_API_BASE = "aws_api_base"
 CONF_AWS_API_KEY = "aws_api_key"
+CONF_BLE_SLOTS = "ble_slots"        # paste-block: tx/rx key+nonce
+CONF_BLE_ADDRESS = "ble_address"    # grill BLE MAC/UUID (optional)
+
+# Woodfire BLE GATT service (advertised); used to discover the grill.
+BLE_SERVICE_UUID = "0000fcbb-0000-1000-8000-00805f9b34fb"
 
 # Adaptive polling cadence — fast while cooking, relaxed while idle.
 SCAN_INTERVAL_ACTIVE = timedelta(seconds=3)
