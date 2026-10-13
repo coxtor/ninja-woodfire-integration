@@ -43,9 +43,12 @@ STACK_SIZE = 0x200000
 HEAP_BASE = 0x1000_0000
 HEAP_SIZE = 0x400000
 
-# The constant buffers the key-init allocates, in order (size -> name).
+# The constant buffers the key-init allocates, in order (size -> name). slot0's
+# nonce is read from code (capstone) because emulation diverges right after the
+# slot0 key store; everything before it is read straight from emulated memory.
 _WANT = [(0x180, "pv8"), (0x20, "slot5k"), (0x10, "slot5n"),
-         (0x20, "c32"), (0x10, "c16"), (0x20, "slot0k"), (0x10, "slot0n")]
+         (0x20, "c32"), (0x10, "c16"), (0x20, "slot0k")]
+_TEXT_VADDR_DELTA = 0x4000   # .text vaddr - file offset (reference build)
 
 
 def _align_down(x): return x & ~(PAGE - 1)
@@ -111,7 +114,7 @@ def _extract_constants(path: str, kdf: int) -> dict[str, bytes]:
         if target == MALLOC_PLT:
             sz = uc.reg_read(UC_ARM64_REG_X0)
             buf = bump(sz)
-            st["mallocs"].append((sz, buf))
+            st["mallocs"].append((sz, buf, address))
             uc.reg_write(UC_ARM64_REG_X0, buf)
         else:
             # Once all constant buffers are allocated AND filled (we're now at the
@@ -152,14 +155,21 @@ def _extract_constants(path: str, kdf: int) -> dict[str, bytes]:
         raise RuntimeError(
             f"could not capture all constant buffers (saw sizes "
             f"{[hex(s) for s, _ in st['mallocs']]}); wrong --kdf for this build?")
-    # Match the allocated buffers to the expected sizes, in order.
-    out, used = {}, [False] * len(st["mallocs"])
+    # Match the allocated buffers to the expected sizes, in order, read from
+    # emulated memory; remember slot0's key-malloc site for the capstone read.
+    out, used, slot0k_site = {}, [False] * len(st["mallocs"]), None
     for want_sz, name in _WANT:
-        for i, (sz, buf) in enumerate(st["mallocs"]):
+        for i, (sz, buf, addr) in enumerate(st["mallocs"]):
             if not used[i] and sz == want_sz:
                 used[i] = True
                 out[name] = bytes(uc.mem_read(buf, want_sz))
+                if name == "slot0k":
+                    slot0k_site = addr
                 break
+    # slot0 key+nonce from code at its malloc site (emulation diverges after it).
+    key0, out["slot0n"] = _read_const_pair(data, slot0k_site)
+    if key0 != out["slot0k"]:
+        raise RuntimeError("slot-0 key mismatch (memory vs code); wrong build?")
     return out
 
 
@@ -168,9 +178,39 @@ def _have_all(mallocs) -> bool:
     for sz, _ in _WANT:
         need[sz] = need.get(sz, 0) + 1
     have = {}
-    for sz, _ in mallocs:
+    for sz, *_ in mallocs:
         have[sz] = have.get(sz, 0) + 1
     return all(have.get(sz, 0) >= n for sz, n in need.items())
+
+
+def _read_const_pair(data: bytes, call_site: int) -> tuple[bytes, bytes]:
+    """Read the 4 u64 (key) + 2 u64 (nonce) that the code at `call_site` builds
+    with mov/movz/movk and stores via `str x<n>,[x0,#off]` — for slot 0."""
+    import capstone
+    md = capstone.Cs(capstone.CS_ARCH_ARM64, capstone.CS_MODE_LITTLE_ENDIAN)
+    f = call_site - _TEXT_VADDR_DELTA
+    regs: dict[str, int] = {}
+    words: list[int] = []
+    for ins in md.disasm(data[f:f + 0x400], call_site):
+        m, ops = ins.mnemonic, [o.strip() for o in ins.op_str.split(",")]
+        if m in ("mov", "movz") and len(ops) >= 2 and ops[1].startswith("#"):
+            v = int(ops[1][1:], 0)
+            if "lsl" in ins.op_str:
+                v <<= int(ins.op_str.split("lsl")[1].replace("#", "").strip(), 0)
+            regs[ops[0]] = v & 0xFFFFFFFFFFFFFFFF
+        elif m == "movk" and len(ops) >= 2:
+            sh = int(ins.op_str.split("lsl")[1].replace("#", "").strip(), 0) if "lsl" in ins.op_str else 0
+            imm = int(ops[1][1:], 0)
+            regs[ops[0]] = ((regs.get(ops[0], 0) & ~(0xFFFF << sh)) | (imm << sh)) & 0xFFFFFFFFFFFFFFFF
+        elif m == "str" and len(ops) >= 2 and ops[0] in regs and ops[1].startswith("[x0"):
+            words.append(regs[ops[0]])
+            if len(words) >= 6:
+                break
+    if len(words) < 6:
+        raise RuntimeError(f"slot-0 const read incomplete ({len(words)}/6)")
+    key = b"".join(struct.pack("<Q", w) for w in words[0:4])
+    iv = b"".join(struct.pack("<Q", w) for w in words[4:6])
+    return key, iv
 
 
 def _cbc(pt: bytes, key: bytes, iv: bytes) -> bytes:
