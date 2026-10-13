@@ -95,14 +95,21 @@ async def test_local_only_flow_without_cloud(hass):
     r = await hass.config_entries.flow.async_init(DOMAIN, context={"source": config_entries.SOURCE_USER})
     r = await hass.config_entries.flow.async_configure(r["flow_id"], {"next_step_id": "local"})
     assert r["step_id"] == "local"
+    # Local setup needs the key bundle the user extracted themselves (144 bytes).
+    blob = (
+        "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8gISIjJCUmJygpKissLS4v"
+        "MDEyMzQ1Njc4OTo7PD0+P0BBQkNERUZHSElKS0xNTk9QUVJTVFVWV1hZWltcXV5f"
+        "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8AAQIDBAUGBwgJCgsMDQ4P"
+    )
     with patch("custom_components.ninja_woodfire.async_setup_entry", return_value=True):
         r = await hass.config_entries.flow.async_configure(
-            r["flow_id"], {"ble_address": "AA:BB:CC:DD:EE:FF"}
+            r["flow_id"], {"ble_address": "AA:BB:CC:DD:EE:FF", "ble_slots": blob}
         )
     assert r["type"] is FlowResultType.CREATE_ENTRY
     assert r["result"].unique_id == "AA:BB:CC:DD:EE:FF"
     assert "email" not in r["result"].data
     assert r["result"].data["ble_address"] == "AA:BB:CC:DD:EE:FF"
+    assert r["result"].data["ble_slots"] == blob
     # A manually-entered grill gets the friendly name, never a raw MAC.
     assert r["result"].title == "Ninja Woodfire"
 

@@ -18,10 +18,11 @@ Home Assistant — **fully local over Bluetooth**, or over the Ninja cloud.
 
 Chosen in the setup wizard:
 
-- **Local (Bluetooth)** — no account, no cloud. Found over Bluetooth and
-  controlled directly, including through ESPHome Bluetooth proxies. Full cook
-  control, live temperatures and the meat probe. *(recommended)*
-- **Cloud** — sign in with your Ninja Kitchen account (Ayla/AWS).
+- **Local (Bluetooth)** — no account, no cloud. Full cook control, live
+  temperatures, meat probe and lid over Bluetooth (ESPHome proxies work). Needs
+  a one-time key bundle you extract yourself from your own copy of the vendor
+  app — see **[Local setup — extract your keys](#local-setup--extract-your-keys)**.
+- **Cloud** — sign in with your Ninja Kitchen account (Ayla/AWS). *(no extra steps)*
 
 Matching Lovelace card: [ninja-woodfire-card](https://github.com/coxtor/ninja-woodfire-card).
 
@@ -49,6 +50,28 @@ The phase and prompt are read from the grill's advertisement beacon. A few
 states aren't mapped there yet — **contributions welcome**: the *resting* phase,
 the *close-lid* prompt and the *end* screen. "Powered off" isn't broadcast at
 all (the grill just stops advertising), so it simply shows as offline.
+
+## Local setup — extract your keys
+
+**This project ships no key material.** Talking to the grill locally needs a few
+AES keys that live inside the vendor app. You extract them **once, yourself, from
+your own copy of the app**, and paste the result into the integration. Nothing
+secret is distributed here; the extraction tool only reads the keys out of a copy
+you already have.
+
+1. Download the Ninja app APK (e.g. from APKMirror) and unzip it; find
+   `lib/arm64-v8a/libgrillcore.so` inside.
+2. Run the extractor with that file and your grill's Bluetooth address
+   (needs Python with `unicorn`, `capstone` and `cryptography`):
+   ```bash
+   python3 scripts/extract_ninja_keys.py --so libgrillcore.so --mac AA:BB:CC:DD:EE:FF
+   ```
+   It emulates the app's own key routine on your copy and prints a single key
+   bundle string. No keys are baked into this tool.
+3. In Home Assistant: *Add Integration → Ninja Woodfire → Local*, pick your grill
+   and paste the bundle. Done — the keys stay on your machine.
+
+Cloud setup needs none of this.
 
 ## Install & set up
 

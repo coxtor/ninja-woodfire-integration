@@ -84,6 +84,7 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
         device_info_extra: dict[str, str] | None = None,
         aws: AwsCloudClient | None = None,
         ble: GrillTransport | None = None,
+        beacon_slot: tuple[bytes, bytes] | None = None,
     ) -> None:
         super().__init__(
             hass,
@@ -142,6 +143,9 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
         self.beacon_lid: bool | None = None
         self.beacon_phase: str | None = None
         self.beacon_prompt: str | None = None
+        # The beacon slot (key, nonce) that decrypts the advertisement; from the
+        # pasted key bundle. None -> no beacon decode (probe/lid/phase stay unknown).
+        self.beacon_slot = beacon_slot
         self._beacon_at: float = 0.0
         self.beacon_unsub = None
 
@@ -203,7 +207,9 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
         The meat-probe temperature is not in the GATT state frame; the grill
         broadcasts it in its advertisement. Called from a Bluetooth callback.
         """
-        parsed = parse_beacon(mfg)
+        if self.beacon_slot is None:
+            return
+        parsed = parse_beacon(mfg, self.beacon_slot[0], self.beacon_slot[1])
         if parsed is None:
             return
         self.beacon_probes = [parsed["probe0_temp"], parsed["probe1_temp"]]

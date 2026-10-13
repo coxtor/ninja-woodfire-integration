@@ -296,8 +296,9 @@ async def test_local_only_coordinator_has_no_cloud(hass, entry):
 
 # Encrypted mfg1 beacon segments (synthetic; see test_ble_beacon). probe0 53°C
 # lid closed; lid open with no probe.
-_BEACON_PROBE53_CLOSED = bytes.fromhex("0000000000000000000000000000000000000000")
-_BEACON_NOPROBE_OPEN = bytes.fromhex("0000000000000000000000000000000000000000")
+_BEACON_SLOT = (bytes(range(32)), bytes(range(16)))  # fake beacon slot (no real key)
+_BEACON_PROBE53_CLOSED = bytes.fromhex("aaa391711626d18d8cad17032ef4ef4530e71a21")
+_BEACON_NOPROBE_OPEN = bytes.fromhex("cbe858bf3f3e8e3df896c29992902dc8e3af90f1")
 
 
 async def test_beacon_merges_probe_and_lid_into_local_state(hass, entry):
@@ -307,7 +308,8 @@ async def test_beacon_merges_probe_and_lid_into_local_state(hass, entry):
 
     ble = AsyncMock()
     ble.get_combined_state.return_value = mk_state()
-    c = NinjaWoodfireCoordinator(hass, entry, None, DSN, WOODFIRE_PRO_XL, 0, ble=ble)
+    c = NinjaWoodfireCoordinator(hass, entry, None, DSN, WOODFIRE_PRO_XL, 0, ble=ble,
+                                    beacon_slot=_BEACON_SLOT)
     await c.async_refresh()
     assert c.backend == "ble"
 
@@ -324,7 +326,8 @@ async def test_beacon_lid_without_probe(hass, entry):
 
     ble = AsyncMock()
     ble.get_combined_state.return_value = mk_state()
-    c = NinjaWoodfireCoordinator(hass, entry, None, DSN, WOODFIRE_PRO_XL, 0, ble=ble)
+    c = NinjaWoodfireCoordinator(hass, entry, None, DSN, WOODFIRE_PRO_XL, 0, ble=ble,
+                                    beacon_slot=_BEACON_SLOT)
     await c.async_refresh()
 
     c.update_beacon(_BEACON_NOPROBE_OPEN)
@@ -362,8 +365,8 @@ async def test_wake_never_stops_an_active_cook(hass, entry):
     ble.stop_cook.assert_not_called()
 
 
-_BEACON_PREHEAT = bytes.fromhex("0000000000000000000000000000000000000000")
-_BEACON_ADDFOOD = bytes.fromhex("0000000000000000000000000000000000000000")
+_BEACON_PREHEAT = bytes.fromhex("73c4dc4a674c82774ffcaf700815aefd6733cf4c")
+_BEACON_ADDFOOD = bytes.fromhex("c770529bdb2180b0652924210adf66ddadb5a039")
 
 
 async def test_beacon_phase_and_prompt_merge_locally(hass, entry):
@@ -373,7 +376,8 @@ async def test_beacon_phase_and_prompt_merge_locally(hass, entry):
 
     ble = AsyncMock()
     ble.get_combined_state.return_value = mk_state()
-    c = NinjaWoodfireCoordinator(hass, entry, None, DSN, WOODFIRE_PRO_XL, 0, ble=ble)
+    c = NinjaWoodfireCoordinator(hass, entry, None, DSN, WOODFIRE_PRO_XL, 0, ble=ble,
+                                    beacon_slot=_BEACON_SLOT)
     await c.async_refresh()
 
     # Preheat: the beacon is the only local preheat signal, so Skip preheat works.

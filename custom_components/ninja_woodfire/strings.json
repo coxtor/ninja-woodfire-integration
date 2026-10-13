@@ -30,9 +30,10 @@
       },
       "local": {
         "title": "Local control over Bluetooth",
-        "description": "No account needed. The grill is found over Bluetooth (ESPHome proxies work) and its session keys are derived automatically from its public Bluetooth address — nothing to paste.",
+        "description": "No account needed. The grill is found over Bluetooth (ESPHome proxies work). Local control needs a one-time key bundle you extract from your own copy of the vendor app — see the integration README for the short how-to.",
         "data": {
-          "ble_address": "Bluetooth address (leave empty to auto-detect)"
+          "ble_address": "Bluetooth address (leave empty to auto-detect)",
+          "ble_slots": "Key bundle (paste the full output of the extraction script)"
         }
       },
       "reauth_confirm": {
@@ -48,7 +49,9 @@
       "cannot_connect": "Cannot reach Ninja cloud.",
       "no_devices": "No grills found on this account.",
       "unknown": "Unexpected error.",
-      "no_ble_device": "No Woodfire grill found over Bluetooth. Enter its address, or make sure an adapter/proxy is in range."
+      "no_ble_device": "No Woodfire grill found over Bluetooth. Enter its address, or make sure an adapter/proxy is in range.",
+      "no_keys": "Paste the key bundle — see the README for how to extract it.",
+      "bad_keys": "That key bundle isn't valid. Re-run the extraction script and paste its full output."
     },
     "abort": {
       "already_configured": "This grill is already configured.",

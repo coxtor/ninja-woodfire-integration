@@ -22,6 +22,7 @@ from .const import (
     CONF_AYLA_APP_ID,
     CONF_AYLA_APP_SECRET,
     CONF_BLE_ADDRESS,
+    CONF_BLE_SLOTS,
     CONF_DSN,
     CONF_REGION,
     DEFAULT_REGION,
@@ -172,24 +173,37 @@ class NinjaWoodfireConfigFlow(ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
         if user_input is not None:
             address = (self._ble_address or user_input.get(CONF_BLE_ADDRESS) or "").strip()
+            blob = (user_input.get(CONF_BLE_SLOTS) or "").strip()
             if not address and len(discovered) == 1:
                 address = next(iter(discovered))
             if not address:
                 errors["base"] = "no_ble_device"
+            elif not blob:
+                errors["base"] = "no_keys"
             else:
-                # The session keys are derived at runtime from the grill's public
-                # BLE address — no secret, no token, nothing to paste.
-                await self.async_set_unique_id(address)
-                self._abort_if_unique_id_configured()
-                return self.async_create_entry(
-                    title=self._ble_name or _LOCAL_NAME,
-                    data={CONF_DSN: address, CONF_BLE_ADDRESS: address},
-                )
+                # The keys come from the user's own extraction (see README); we
+                # only validate that the pasted bundle is well-formed.
+                from ._lib.api import ble_proto
+                try:
+                    ble_proto.parse_slots_blob(blob)
+                except ValueError:
+                    errors["base"] = "bad_keys"
+                else:
+                    await self.async_set_unique_id(address)
+                    self._abort_if_unique_id_configured()
+                    return self.async_create_entry(
+                        title=self._ble_name or _LOCAL_NAME,
+                        data={CONF_DSN: address, CONF_BLE_ADDRESS: address,
+                              CONF_BLE_SLOTS: blob},
+                    )
 
         addr_field = vol.In(discovered) if discovered else str
         return self.async_show_form(
             step_id="local",
-            data_schema=vol.Schema({vol.Optional(CONF_BLE_ADDRESS, default=""): addr_field}),
+            data_schema=vol.Schema({
+                vol.Optional(CONF_BLE_ADDRESS, default=""): addr_field,
+                vol.Required(CONF_BLE_SLOTS): str,
+            }),
             errors=errors,
         )
 
