@@ -190,11 +190,15 @@ rely on automations for anything safety-critical. Please operate the grill
 safely — within the limits of applicable law, the software is provided as-is
 without warranty (see LICENSE), and that cannot override your own duty of care.
 
-**Independent interoperability project.** This program is written to make your
-*own* grill work with Home Assistant; it bundles no vendor application code,
-libraries or keys. Any key extraction is done by you, locally, against your own
-copy of the app, only to the extent needed for that interoperability. You are
-responsible for complying with the app's terms and your local law.
+**Independent interoperability project.** This integration enables owners to
+control their own grill locally through Home Assistant, without requiring the
+vendor app or cloud during operation. App analysis is limited to obtaining the
+information necessary for this interoperability.
+
+It bundles no vendor application code, libraries or keys. The app file is only
+needed **once**, by you, locally, to obtain the keys — after that the local
+control runs independently of it. You are responsible for complying with the
+app's terms and your local law.
 
 Unofficial and independent — **not affiliated with or endorsed by SharkNinja
 Operating LLC**. "Ninja", "Woodfire" and related names are trademarks of their
