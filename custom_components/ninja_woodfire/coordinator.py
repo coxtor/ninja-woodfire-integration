@@ -5,7 +5,7 @@ import asyncio
 import logging
 import time
 from collections.abc import Awaitable
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
@@ -20,7 +20,7 @@ from ._lib.api.ayla import AylaCloudClient
 from ._lib.api.ble_beacon import parse_beacon
 from ._lib.api.errors import AuthError, NinjaCloudError, TransportError
 from ._lib.capabilities import GrillCapabilities, grill_level
-from ._lib.models import CombinedState, ProbeInfo, ProbeMode, ProbeState
+from ._lib.models import CombinedState, CookState, GrillState, ProbeInfo, ProbeMode, ProbeState
 
 from .const import (
     ACTIVE_STATES,
@@ -56,6 +56,17 @@ _AWS_RETRY_S = 60
 _BLE_RETRY_S = 60
 # How long a passively-scanned advertisement beacon reading stays valid.
 _BEACON_TTL_S = 60
+# No beacon AND no successful connect for this long -> the grill is off / out of
+# range. Shorter outages keep the last state (smooths transient radio glitches).
+_OFFLINE_AFTER_S = 60
+# Beacon display-prompt -> the grill's current cook step. Takes priority over the
+# coarse phase so the card/state reflect what the grill display actually shows.
+_PROMPT_STATE = {
+    "addfood": "insert_food",   # preheat done, waiting for food (not yet cooking)
+    "flipfood": "flip",
+    "getfood": "get_food",
+    "done": "done",
+}
 
 type NinjaWoodfireConfigEntry = ConfigEntry[NinjaWoodfireCoordinator]
 
@@ -147,6 +158,21 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
         # pasted key bundle. None -> no beacon decode (probe/lid/phase stay unknown).
         self.beacon_slot = beacon_slot
         self._beacon_at: float = 0.0
+        # Last time we heard anything from the grill (beacon or a successful
+        # connect). Drives the "offline / powered off" indication over BLE.
+        self._last_contact_m: float = 0.0
+        # Local cook-timer estimate for the BLE path (the GATT timer frame is
+        # usually absent): when cooking started, counting down the configured
+        # duration. None while not cooking.
+        self._local_cook_end: datetime | None = None
+        # Skip-preheat toggle: the firmware ignores skip=1 on the initial cook;
+        # it only skips when re-sent during preheat (what the Skip button does).
+        # So when the toggle is on we auto-fire that skip once preheat is seen.
+        self._auto_skip_pending: bool = False
+        # Have we actually seen a cook phase since the last idle/stop? Gates
+        # trusting beacon display-prompts, so a stale idle prompt can't fabricate
+        # a cook. Reset when the cook ends / the grill goes offline.
+        self._cook_seen: bool = False
         self.beacon_unsub = None
 
     # ------------------------------------------------------------------ polling
@@ -157,6 +183,7 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
         if self.ble is not None and self.transport is not self.ble \
                 and time.monotonic() >= self._ble_recheck_at:
             self.transport = self.ble
+        real = True
         try:
             try:
                 state = await self.transport.get_combined_state(self.dsn)
@@ -167,6 +194,13 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
                     _LOGGER.info("Grill %s BLE unavailable; using cloud", self.dsn)
                     self.transport = self.client
                     state = await self.transport.get_combined_state(self.dsn)
+                elif self.transport is self.ble:
+                    # Local-only: a couldn't-connect is normal when the grill is
+                    # off or briefly out of range. Keep the last state for a short
+                    # while (smooth glitches), then report it cleanly offline —
+                    # don't flap entities to "unavailable".
+                    state = self._ble_offline_or_last()
+                    real = False
                 else:
                     raise
             if self.transport is not self.ble and self._should_switch(state):
@@ -176,8 +210,10 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
             raise self._failed(ConfigEntryAuthFailed(str(err))) from err
         except TransportError as err:
             raise self._failed(UpdateFailed(f"transport: {err}")) from err
-        self.last_success_at = dt_util.utcnow()
-        self.failed_polls = 0
+        if real:
+            self.last_success_at = dt_util.utcnow()
+            self.failed_polls = 0
+            self._last_contact_m = time.monotonic()
         self._normalize(state)
         self._merge_beacon(state)
         active = (
@@ -191,12 +227,40 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
             self._emit_lifecycle_events(state)
         else:
             self._prev_grill_state = None
+            self._cook_seen = False
+        # Skip-preheat toggle: re-issue the skip (the mechanism that works) as
+        # soon as the grill is actually preheating.
+        if self._auto_skip_pending and state.online and is_preheating(state):
+            self._auto_skip_pending = False
+            self.hass.async_create_task(self.async_skip_preheat())
         return state
 
     def _failed(self, err: Exception) -> Exception:
         self.failed_polls += 1
         self.last_error = str(err)
         return err
+
+    def _ble_offline_or_last(self) -> CombinedState:
+        """State to use when a local BLE poll couldn't reach the grill.
+
+        A fresh beacon counts as contact (a grill that still advertises but
+        refuses a GATT connection is reachable, not off). While we've had contact
+        recently, keep the last known state so a brief radio glitch doesn't flap
+        the card. Once there's been no contact (beacon or connect) for a while,
+        report the grill cleanly offline ("powered off") so the card shows Wake
+        instead of every entity going "unavailable".
+        """
+        if self.data is not None and time.monotonic() - self._last_contact_m <= _OFFLINE_AFTER_S:
+            return self.data
+        return CombinedState(
+            dsn=self.dsn,
+            grill=GrillState(state="powered_off"),
+            cook=CookState(),
+            probes=ProbeState(),
+            online=False,
+            connection_status="Offline",
+            last_updated_at=dt_util.utcnow(),
+        )
 
     # ------------------------------------------------------------- beacon (passive)
 
@@ -217,9 +281,16 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
         self.beacon_phase = parsed["phase"]
         self.beacon_prompt = parsed["prompt"]
         self._beacon_at = time.monotonic()
+        self._last_contact_m = self._beacon_at   # a beacon means the grill is reachable
         # Push the fresh reading to entities without waiting for the next poll.
         if self.data is not None and self.backend == "ble":
             self._merge_beacon(self.data)
+            # Prompts (add food / flip / get food) and phase changes live in the
+            # beacon and are often transient — the slow poll misses them. Fire
+            # lifecycle events from the beacon push too so they reliably reach
+            # automations / Node-RED.
+            if self.data.online:
+                self._emit_lifecycle_events(self.data)
             self.async_update_listeners()
 
     def _merge_beacon(self, state: CombinedState) -> None:
@@ -238,12 +309,57 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
         # which is what enables Skip preheat and the preheat-complete event.
         if self.beacon_lid is not None:
             state.grill.lid_open = self.beacon_lid
-        if self.beacon_prompt is not None:
-            state.grill.prompt = self.beacon_prompt
-        # preheat (grill/air) and ignition (smoke) are both "still heating up",
-        # the only local preheat signal; surface them unless add-food cleared it.
-        if self.beacon_phase in ("preheat", "ignition") and self.beacon_prompt != "addfood":
+        # Only trust a display prompt once we've actually seen the grill in a cook
+        # phase. An idle grill can broadcast a stale/left-over prompt (e.g. "get
+        # food") in its beacon; honoring it would fabricate an active state and
+        # fire spurious prompt / cook-done events with no cook running.
+        if self.beacon_phase in ("cooking", "preheat", "ignition"):
+            self._cook_seen = True
+        prompt = self.beacon_prompt if self._cook_seen else None
+        if prompt is not None:
+            state.grill.prompt = prompt
+        # Surface the cook phase the beacon reports. Over BLE the GATT state
+        # frame is usually absent (idle grills don't stream it), so the beacon is
+        # often the only live phase signal: "cooking" lets the card show
+        # "Grilling" instead of Unknown; preheat/ignition are the only local
+        # preheat signal (enables Skip preheat / the preheat-complete event).
+        # A live prompt is the grill's current step and takes priority over the
+        # coarse phase: "add food" (preheat done, waiting for food), flip, get
+        # food, done. This also keeps "cooking" — and thus the cook timer — from
+        # starting until the prompt clears (food actually went in).
+        prompt_state = _PROMPT_STATE.get(prompt)
+        if prompt_state is not None:
+            state.grill.state = prompt_state
+        elif self.beacon_phase == "cooking":
+            state.grill.state = "cooking"
+        elif self.beacon_phase in ("preheat", "ignition"):
             state.grill.state = self.beacon_phase
+        elif self.beacon_phase is None and not is_active(state):
+            # A fresh beacon with no active phase means the grill is on but idle.
+            # Pin it to "idle" so the card shows a stable "Ready" instead of
+            # flapping to Unknown whenever the GATT state frame is absent.
+            state.grill.state = "idle"
+        # Without the GATT frame the mode is blank; show the configured cook so
+        # the card reflects the running cook instead of an empty header.
+        if state.grill.state in ("cooking", "preheat", "ignition") and not state.grill.mode:
+            state.grill.mode = self.cook_setting_mode
+        # Local cook-timer estimate. The GATT timer frame is usually absent over
+        # BLE, so once the grill is cooking we count down the configured duration
+        # (the firmware's cook timer also only starts after preheat). A real 0x0f
+        # timer always wins (seconds_set already set).
+        if state.grill.state == "cooking" and not state.grill.seconds_set:
+            # Start the countdown only once the lid is closed after loading — the
+            # firmware's cook timer starts then too, not the instant preheat ends
+            # / skip is pressed. Once started, keep counting through lid flaps.
+            if self._local_cook_end is None and not state.grill.lid_open:
+                self._local_cook_end = dt_util.utcnow() + timedelta(seconds=self.cook_setting_seconds)
+            if self._local_cook_end is not None:
+                left = max(0, int((self._local_cook_end - dt_util.utcnow()).total_seconds()))
+                state.grill.seconds_set = self.cook_setting_seconds
+                state.grill.seconds_left = left
+                state.grill.end_time_utc = int(self._local_cook_end.timestamp())
+        elif state.grill.state != "cooking":
+            self._local_cook_end = None   # not cooking -> reset the estimate
         if not any(t is not None for t in self.beacon_probes):
             return
         probes = []
@@ -427,6 +543,7 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
         if (g == "done" and prev != "done") or (prev in ACTIVE_STATES and g.casefold() in IDLE_STATES | WAITING_STATES):
             fire(EVENT_COOK_DONE, {**common, "reason": "done" if g == "done" else "stopped"})
             self._reset_cook_flags()
+            self._cook_seen = False
 
         prompt = grill.prompt
         if prompt and prompt != self._prev_prompt:
@@ -574,7 +691,7 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
             mode=mode.name,
             seconds=seconds,
             temp=temp,
-            smoke=self.cook_setting_smoke and mode.supports_smoke,
+            smoke=mode.requires_smoke or (self.cook_setting_smoke and mode.supports_smoke),
             skip_preheat=self.cook_setting_skip_preheat,
             probe_0=probes[0],
             probe_1=probes[1],
@@ -582,12 +699,28 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
         ))
         self._remember_issue(mode.name, temp, seconds, seconds)
         self._new_cook = True
+        # The firmware ignores skip=1 at start; auto-skip once preheat is seen.
+        self._auto_skip_pending = self.cook_setting_skip_preheat
+        # Optimistic: reflect the start immediately so the card doesn't sit on the
+        # old state for a whole BLE poll; the burst-refresh confirms it shortly.
+        if self.data is not None:
+            self.data.online = True
+            self.data.grill.mode = mode.name
+            self.data.grill.state = "cooking" if self.cook_setting_skip_preheat else "preheat"
+            self.async_update_listeners()
         await self._burst_refresh()
 
     async def async_stop_cook(self) -> None:
         await self._command(self.transport.stop_cook(self.dsn))
         self._issued_level = None
         self._seconds_override = None
+        self._auto_skip_pending = False
+        self._cook_seen = False
+        # Optimistic: show the cook ended right away (card updates instantly).
+        if self.data is not None:
+            self.data.grill.state = "idle"
+            self.data.cook.state = "none"
+            self.async_update_listeners()
         await self._burst_refresh()
 
     async def async_wake(self) -> None:
@@ -639,6 +772,11 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
             self.cook_setting_seconds = seconds
         if smoke is not None:
             self.cook_setting_smoke = smoke
+        # Smoking without smoke makes no sense: a mode that requires smoke keeps
+        # it on, so the staged value (and the card's smoke switch) stay consistent.
+        staged = self.capabilities.get_mode(self.cook_setting_mode)
+        if staged is not None and staged.requires_smoke:
+            self.cook_setting_smoke = True
 
         live = self.data
         if not self.is_cook_active or (mode, temp, seconds, smoke) == (None,) * 4:
@@ -701,7 +839,10 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
             raise HomeAssistantError("The cook is finished and resting")
         remaining = self._remaining_seconds(live)
         if remaining <= 0 and is_preheating(live):
-            remaining = live.grill.seconds_set or 0
+            # Preheat hasn't started the cook timer yet; over BLE there's no live
+            # timer at all. Use the configured full duration (the firmware's cook
+            # timer also only starts once preheat ends).
+            remaining = live.grill.seconds_set or self.cook_setting_seconds or 0
         if remaining <= 0:
             raise HomeAssistantError("The cook timer has run out")
         elapsed = max(0, (live.grill.seconds_set or remaining) - remaining)
@@ -719,7 +860,7 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
         if caps is not None:
             if not caps.temp_min <= new_temp <= caps.temp_max:
                 new_temp = caps.temp_default
-            new_smoke = new_smoke and caps.supports_smoke
+            new_smoke = caps.requires_smoke or (new_smoke and caps.supports_smoke)
             new_seconds = max(caps.duration_min_s, min(caps.duration_max_s, new_seconds))
             if not caps.supports_probe:
                 payloads = [None, None]

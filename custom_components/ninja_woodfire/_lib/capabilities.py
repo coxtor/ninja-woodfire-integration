@@ -30,6 +30,7 @@ class ModeCapability:
     temp_default: int = 0
     supports_smoke: bool = False
     smoke_default: bool = False
+    requires_smoke: bool = False     # mode makes no sense without smoke (smoker)
     supports_probe: bool = True
 
 
@@ -77,7 +78,7 @@ WOODFIRE_PRO_XL = GrillCapabilities(
             temp_min=55, temp_max=210,
             temp_default=110, duration_default_s=14400,    # 4 h
             duration_max_s=43200,                          # 12 h
-            supports_smoke=True, smoke_default=True,
+            supports_smoke=True, smoke_default=True, requires_smoke=True,
             supports_probe=True,
         ),
         ModeCapability(

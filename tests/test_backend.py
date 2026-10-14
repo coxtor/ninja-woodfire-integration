@@ -389,3 +389,268 @@ async def test_beacon_phase_and_prompt_merge_locally(hass, entry):
     c.update_beacon(_BEACON_ADDFOOD)
     assert c.data.grill.prompt == "addfood"
     assert is_preheating(c.data) is False
+
+
+@pytest.mark.asyncio
+async def test_beacon_prompt_fires_a_prompt_event(hass, entry):
+    from unittest.mock import AsyncMock
+    from pytest_homeassistant_custom_component.common import async_capture_events
+    from custom_components.ninja_woodfire.coordinator import NinjaWoodfireCoordinator
+    from custom_components.ninja_woodfire.const import EVENT_PROMPT
+    from custom_components.ninja_woodfire._lib.capabilities import WOODFIRE_PRO_XL
+
+    ble = AsyncMock()
+    good = mk_state()
+    good.online = True
+    ble.get_combined_state.return_value = good
+    c = NinjaWoodfireCoordinator(hass, entry, None, DSN, WOODFIRE_PRO_XL, 0, ble=ble,
+                                 beacon_slot=_BEACON_SLOT)
+    await c.async_refresh()
+
+    c._cook_seen = True                     # a cook is in progress
+    events = async_capture_events(hass, EVENT_PROMPT)
+    c.update_beacon(_BEACON_ADDFOOD)        # transient prompt via the fast beacon
+    await hass.async_block_till_done()
+    assert any(e.data.get("prompt") == "addfood" for e in events)
+
+
+@pytest.mark.asyncio
+async def test_stale_prompt_without_a_cook_is_ignored(hass, entry):
+    from unittest.mock import AsyncMock
+    from custom_components.ninja_woodfire.coordinator import NinjaWoodfireCoordinator
+    from custom_components.ninja_woodfire._lib.capabilities import WOODFIRE_PRO_XL
+
+    ble = AsyncMock()
+    good = mk_state()
+    good.online = True
+    ble.get_combined_state.return_value = good
+    c = NinjaWoodfireCoordinator(hass, entry, None, DSN, WOODFIRE_PRO_XL, 0, ble=ble,
+                                 beacon_slot=_BEACON_SLOT)
+    await c.async_refresh()
+
+    # No cook seen + an idle beacon (phase None) carrying a left-over "get food"
+    # prompt must NOT fabricate a prompt/active state (previously fired spurious
+    # prompt + cook-done events with no cook running).
+    import time as _time
+    assert c._cook_seen is False
+    c.beacon_phase = None
+    c.beacon_prompt = "getfood"
+    c._beacon_at = _time.monotonic()
+    c._merge_beacon(c.data)
+    assert c.data.grill.prompt is None
+    assert c.data.grill.state != "get_food"
+    assert c._cook_seen is False
+
+
+@pytest.mark.asyncio
+async def test_beacon_cooking_phase_shows_grilling_with_configured_mode(hass, entry):
+    import time as _time
+    from unittest.mock import AsyncMock
+    from custom_components.ninja_woodfire.coordinator import NinjaWoodfireCoordinator
+    from custom_components.ninja_woodfire._lib.capabilities import WOODFIRE_PRO_XL
+
+    ble = AsyncMock()
+    ble.get_combined_state.return_value = mk_state()   # idle, no mode from GATT
+    c = NinjaWoodfireCoordinator(hass, entry, None, DSN, WOODFIRE_PRO_XL, 0, ble=ble,
+                                 beacon_slot=_BEACON_SLOT)
+    await c.async_refresh()
+
+    # The grill is cooking (per the beacon) but the GATT state frame is absent:
+    # the card must show "cooking" + the configured mode, not Unknown.
+    c.cook_setting_mode = "smoker"
+    c.beacon_phase = "cooking"
+    c._beacon_at = _time.monotonic()
+    c._merge_beacon(c.data)
+    assert c.data.grill.state == "cooking"
+    assert c.data.grill.mode == "smoker"
+
+
+@pytest.mark.asyncio
+async def test_local_ble_keeps_last_then_reports_offline(hass, entry):
+    import time as _time
+    from unittest.mock import AsyncMock
+    from custom_components.ninja_woodfire.coordinator import NinjaWoodfireCoordinator
+    from custom_components.ninja_woodfire._lib.capabilities import WOODFIRE_PRO_XL
+    from custom_components.ninja_woodfire._lib.api.errors import TransportError
+
+    ble = AsyncMock()
+    good = mk_state(grill={"state": "idle"})
+    good.online = True
+    ble.get_combined_state.return_value = good
+    c = NinjaWoodfireCoordinator(hass, entry, None, DSN, WOODFIRE_PRO_XL, 0, ble=ble,
+                                 beacon_slot=_BEACON_SLOT)
+    await c.async_refresh()
+    assert c.data.grill.state == "idle"
+
+    # BLE can't connect now. Recent contact -> keep the last state (no flapping).
+    ble.get_combined_state.side_effect = TransportError("no connect")
+    c._last_contact_m = _time.monotonic()
+    await c.async_refresh()
+    assert c.data.online is True and c.data.grill.state == "idle"
+
+    # No contact for a while -> report the grill cleanly offline (card -> Wake).
+    c._last_contact_m = _time.monotonic() - 999
+    await c.async_refresh()
+    assert c.data.online is False
+    assert c.data.grill.state == "powered_off"
+
+
+@pytest.mark.asyncio
+async def test_skip_preheat_works_over_ble_without_a_live_timer(hass, entry):
+    from unittest.mock import AsyncMock
+    from custom_components.ninja_woodfire.coordinator import NinjaWoodfireCoordinator
+    from custom_components.ninja_woodfire._lib.capabilities import WOODFIRE_PRO_XL
+
+    ble = AsyncMock()
+    good = mk_state(grill={"state": "preheat"})   # preheating, no GATT timer
+    good.online = True
+    ble.get_combined_state.return_value = good
+    c = NinjaWoodfireCoordinator(hass, entry, None, DSN, WOODFIRE_PRO_XL, 0, ble=ble,
+                                 beacon_slot=_BEACON_SLOT)
+    await c.async_refresh()
+    c.cook_setting_mode = "grill"
+    c.cook_setting_seconds = 600
+
+    await c.async_skip_preheat()              # must not raise "timer has run out"
+    assert ble.start_cook.call_args.kwargs["skip_preheat"] is True
+
+
+@pytest.mark.asyncio
+async def test_add_food_prompt_shows_insert_food_and_holds_the_timer(hass, entry):
+    import time as _time
+    from unittest.mock import AsyncMock
+    from custom_components.ninja_woodfire.coordinator import NinjaWoodfireCoordinator
+    from custom_components.ninja_woodfire._lib.capabilities import WOODFIRE_PRO_XL
+
+    ble = AsyncMock()
+    ble.get_combined_state.return_value = mk_state()
+    c = NinjaWoodfireCoordinator(hass, entry, None, DSN, WOODFIRE_PRO_XL, 0, ble=ble,
+                                 beacon_slot=_BEACON_SLOT)
+    await c.async_refresh()
+    c.cook_setting_seconds = 1800
+
+    # Skip-preheat done -> display "add food": prompt wins, timer must NOT start.
+    c.beacon_phase = "cooking"
+    c.beacon_prompt = "addfood"
+    c._beacon_at = _time.monotonic()
+    c._merge_beacon(c.data)
+    assert c.data.grill.state == "insert_food"
+    assert not c.data.grill.seconds_set
+
+    # Food in -> prompt clears -> really cooking -> timer starts now.
+    c.beacon_prompt = None
+    c._merge_beacon(c.data)
+    assert c.data.grill.state == "cooking"
+    assert c.data.grill.seconds_set == 1800
+
+
+@pytest.mark.asyncio
+async def test_skip_preheat_toggle_auto_skips_once_preheating(hass, entry):
+    from unittest.mock import AsyncMock
+    from custom_components.ninja_woodfire.coordinator import NinjaWoodfireCoordinator
+    from custom_components.ninja_woodfire._lib.capabilities import WOODFIRE_PRO_XL
+
+    ble = AsyncMock()
+    good = mk_state(grill={"state": "preheat"})
+    good.online = True
+    ble.get_combined_state.return_value = good
+    c = NinjaWoodfireCoordinator(hass, entry, None, DSN, WOODFIRE_PRO_XL, 0, ble=ble,
+                                 beacon_slot=_BEACON_SLOT)
+    await c.async_refresh()
+
+    # Toggle on at start -> pending; next poll sees preheat -> auto-fires skip.
+    c.async_skip_preheat = AsyncMock()
+    c._auto_skip_pending = True
+    await c.async_refresh()
+    await hass.async_block_till_done()
+    c.async_skip_preheat.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_local_cook_timer_is_derived_while_cooking(hass, entry):
+    import time as _time
+    from unittest.mock import AsyncMock
+    from custom_components.ninja_woodfire.coordinator import NinjaWoodfireCoordinator
+    from custom_components.ninja_woodfire._lib.capabilities import WOODFIRE_PRO_XL
+
+    ble = AsyncMock()
+    ble.get_combined_state.return_value = mk_state()   # no GATT timer
+    c = NinjaWoodfireCoordinator(hass, entry, None, DSN, WOODFIRE_PRO_XL, 0, ble=ble,
+                                 beacon_slot=_BEACON_SLOT)
+    await c.async_refresh()
+    c.cook_setting_seconds = 1800
+    c.beacon_phase = "cooking"
+    c._beacon_at = _time.monotonic()
+    c._merge_beacon(c.data)
+    assert c.data.grill.seconds_set == 1800
+    assert 1790 <= c.data.grill.seconds_left <= 1800
+    assert c.data.grill.end_time_utc is not None
+
+
+@pytest.mark.asyncio
+async def test_local_cook_timer_waits_for_lid_to_close(hass, entry):
+    import time as _time
+    from unittest.mock import AsyncMock
+    from custom_components.ninja_woodfire.coordinator import NinjaWoodfireCoordinator
+    from custom_components.ninja_woodfire._lib.capabilities import WOODFIRE_PRO_XL
+
+    ble = AsyncMock()
+    ble.get_combined_state.return_value = mk_state()
+    c = NinjaWoodfireCoordinator(hass, entry, None, DSN, WOODFIRE_PRO_XL, 0, ble=ble,
+                                 beacon_slot=_BEACON_SLOT)
+    await c.async_refresh()
+    c.cook_setting_seconds = 1800
+    c.beacon_phase = "cooking"
+    c.beacon_lid = True            # lid still open (loading) -> timer must wait
+    c._beacon_at = _time.monotonic()
+    c._merge_beacon(c.data)
+    assert not c.data.grill.seconds_set
+
+    c.beacon_lid = False           # lid closed -> timer starts now
+    c._merge_beacon(c.data)
+    assert c.data.grill.seconds_set == 1800
+
+
+@pytest.mark.asyncio
+async def test_smoker_mode_forces_smoke_on(hass, entry):
+    from unittest.mock import AsyncMock
+    from custom_components.ninja_woodfire.coordinator import NinjaWoodfireCoordinator
+    from custom_components.ninja_woodfire._lib.capabilities import WOODFIRE_PRO_XL
+
+    ble = AsyncMock()
+    good = mk_state()
+    good.online = True
+    ble.get_combined_state.return_value = good
+    c = NinjaWoodfireCoordinator(hass, entry, None, DSN, WOODFIRE_PRO_XL, 0, ble=ble,
+                                 beacon_slot=_BEACON_SLOT)
+    await c.async_refresh()
+
+    # Selecting smoker with smoke explicitly off must snap smoke back on.
+    await c.async_modify_cook(mode="smoker", smoke=False)
+    assert c.cook_setting_smoke is True
+
+    # ...and Start sends the cook with smoke on.
+    await c.async_start_cook()
+    assert ble.start_cook.call_args.kwargs["mode"] == "smoker"
+    assert ble.start_cook.call_args.kwargs["smoke"] is True
+
+
+@pytest.mark.asyncio
+async def test_fresh_idle_beacon_pins_state_to_idle(hass, entry):
+    import time as _time
+    from unittest.mock import AsyncMock
+    from custom_components.ninja_woodfire.coordinator import NinjaWoodfireCoordinator
+    from custom_components.ninja_woodfire._lib.capabilities import WOODFIRE_PRO_XL
+
+    ble = AsyncMock()
+    # No GATT state frame -> grill.state would be "unknown" without the beacon.
+    ble.get_combined_state.return_value = mk_state(grill={"state": "unknown"})
+    c = NinjaWoodfireCoordinator(hass, entry, None, DSN, WOODFIRE_PRO_XL, 0, ble=ble,
+                                 beacon_slot=_BEACON_SLOT)
+    await c.async_refresh()
+
+    # Fresh beacon, no active phase -> grill is on but idle -> stable "idle".
+    c.beacon_phase = None
+    c._beacon_at = _time.monotonic()
+    c._merge_beacon(c.data)
+    assert c.data.grill.state == "idle"

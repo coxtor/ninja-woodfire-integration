@@ -11,8 +11,7 @@
 Control and monitor the **Ninja Woodfire Connect Pro XL** (`OG900-EU`) grill in
 Home Assistant — **fully local over Bluetooth**, or over the Ninja cloud.
 
-> Hobby project, published as-is — no support, no warranty. Primarily a
-> Claude-assisted project.
+> Hobby project — Claude-assisted.
 
 Developed against the `OG900-EU`, the only unit the author owns. Other Ninja
 Woodfire models likely speak the same protocol and could be supported with small
@@ -180,8 +179,8 @@ debugging and `adb`) and paste them into the *advanced* config fields.
 
 ## Status & disclaimer
 
-Personal hobby project, **as-is — no support, no warranty**; the cloud path
-depends on a third party that may change or break it at any time.
+Personal hobby project; the cloud path depends on a third party that may change
+or break it at any time.
 
 **Safety:** this integration starts, stops and changes **cooking on a device
 with a heating element**. Treat it as a convenience, not a safety control —

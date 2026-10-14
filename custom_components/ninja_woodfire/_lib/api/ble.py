@@ -14,6 +14,8 @@ burst (type 0x0c) arrives on connect.
 """
 from __future__ import annotations
 
+import asyncio
+import logging
 from datetime import datetime, timezone
 from typing import Any, Protocol
 
@@ -24,6 +26,8 @@ from .errors import TransportError
 
 _STATE_TYPE = 0x0F
 _INFO_TYPE = 0x0C
+
+_LOGGER = logging.getLogger(__name__)
 
 
 class BleLink(Protocol):
@@ -41,64 +45,140 @@ class BleTransport:
 
     def __init__(self, tx_slot: tuple[bytes, bytes], rx_slot: tuple[bytes, bytes],
                  link: BleLink, *, listen_seconds: float = 3.0,
-                 connect_attempts: int = 3) -> None:
+                 connect_attempts: int = 3, read_attempts: int = 3,
+                 retry_backoff: float = 1.0, state_rounds: int = 1) -> None:
         self._tx_key, self._tx_nonce = tx_slot
         self._rx_key, self._rx_nonce = rx_slot
         self._link = link
         self._listen = listen_seconds
         self._attempts = max(1, connect_attempts)
+        # Whole-read retries: the ESP/BT-proxy stack throws transient GATT errors
+        # (133, timeouts, "no free connections") when slots are tight; retrying a
+        # fresh connection after freeing the slot usually gets through.
+        self._read_attempts = max(1, read_attempts)
+        self._retry_backoff = max(0.0, retry_backoff)
+        # How many listen windows to wait for a 0x0f state frame. A low-and-slow
+        # smoke emits them less often, so one short window can miss them.
+        self._state_rounds = max(1, state_rounds)
         self._token: int | None = None
         self.info: dict[str, str] = {}   # grill-info (serial, model) from 0c frames
+        # One BLE link, one user at a time: a poll releases the connection when
+        # done, so a command and a poll must never interleave on it.
+        self._lock = asyncio.Lock()
 
     # -- helpers ------------------------------------------------------------
 
     def _decode(self, frame: bytes) -> dict | None:
         return bp.decode_frame(frame, self._rx_key, self._rx_nonce)
 
-    async def _handshake(self) -> int:
-        """Connect, read b001, send CONNECT, return the assigned session token.
+    async def _handshake(self) -> tuple[int, list[bytes]]:
+        """Connect, read b001, send CONNECT, return (token, frames seen meanwhile).
 
         Reading b001 kicks off the grill's notify stream. The grill assigns a
         session token in its reply to CONNECT. A sleeping grill can take a
         moment or miss the first CONNECT, so retry a few times with a listen
-        window each (robust over Bluetooth proxies, which add latency).
+        window each (robust over Bluetooth proxies, which add latency). State
+        (0x0f) frames can already arrive alongside the token, so hand them back
+        rather than discarding them.
         """
         await self._link.connect()
         await self._link.read_b001()
         connect = bp.encode_frame(bp.CONNECT_CMD, self._tx_key, self._tx_nonce, token=0)
+        seen: list[bytes] = []
         for _ in range(self._attempts):
             await self._link.write_b002(connect)
             for frame in await self._link.collect(self._listen):
                 d = self._decode(frame)
-                if d and d["token"]:
+                if not d:
+                    continue
+                if d["command"]:
+                    seen.append(d["command"])
+                if d["token"]:
                     self._token = d["token"]
-                    return d["token"]
+                    return d["token"], seen
         raise TransportError("no session token from grill (CONNECT not accepted)")
 
     async def _send_command(self, command: bytes) -> None:
-        token = await self._handshake()
-        await self._link.write_b002(
-            bp.encode_frame(command, self._tx_key, self._tx_nonce, token=token)
-        )
+        async with self._lock:
+            token, _ = await self._handshake()
+            await self._link.write_b002(
+                bp.encode_frame(command, self._tx_key, self._tx_nonce, token=token)
+            )
 
     # -- GrillTransport -----------------------------------------------------
 
     async def get_combined_state(self, dsn: str) -> CombinedState:
+        """Read the grill state over BLE: connect, listen, release the link.
+
+        We never send a command here to force a GrillState reply. On this grill a
+        stop-cook "poll" is not silent (it beeps) and would cancel a running cook,
+        so the idle state is derived from the passive beacon instead; the GATT
+        0x0f frame is only used when the grill streams it on its own (active cook).
+        """
+        async with self._lock:
+            last_err: TransportError | None = None
+            for attempt in range(self._read_attempts):
+                try:
+                    bodies = await self._read_once()
+                except TransportError as err:
+                    last_err = err
+                except Exception as err:  # noqa: BLE001 - normalise radio errors
+                    last_err = TransportError(f"BLE read failed: {err}")
+                else:
+                    for body in bodies:
+                        if body[:1] == bytes([_INFO_TYPE]):
+                            parsed = bp.parse_grill_info(body)
+                            if parsed:
+                                self.info = parsed
+                    # Release the link so the grill resumes advertising: its probe
+                    # / lid / phase beacon is only broadcast while nothing is
+                    # connected.
+                    await self._safe_disconnect()
+                    return _combined_state(dsn, _latest(bodies, _STATE_TYPE))
+                # This attempt failed: drop the connection so the proxy slot is
+                # freed for the retry (and other devices), then back off.
+                await self._safe_disconnect()
+                if attempt + 1 < self._read_attempts:
+                    _LOGGER.debug("BLE read attempt %d/%d failed (%s); retrying",
+                                  attempt + 1, self._read_attempts, last_err)
+                    if self._retry_backoff:
+                        await asyncio.sleep(self._retry_backoff)
+            raise last_err or TransportError("BLE read failed")
+
+    def _has_state(self, bodies: list[bytes]) -> bool:
+        return any(b[:1] == bytes([_STATE_TYPE]) for b in bodies)
+
+    async def _read_once(self) -> list[bytes]:
+        """One handshake + listen for the latest state, over a fresh session.
+
+        The grill pushes GrillState (0x0f) on its own while a cook is active; we
+        only CONNECT and listen. We never send a cook/stop command to force a
+        reply — it would cancel a running cook (and beeps on this grill). Idle
+        state comes from the passive beacon instead.
+        """
+        _token, bodies = await self._handshake()
+        for _ in range(self._state_rounds):
+            if self._has_state(bodies):
+                break
+            for frame in await self._link.collect(self._listen):
+                d = self._decode(frame)
+                if d and d["command"]:
+                    bodies.append(d["command"])
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            seen: dict[str, int] = {}
+            for b in bodies:
+                key = f"0x{b[0]:02x}" if b else "empty"
+                seen[key] = seen.get(key, 0) + 1
+            _LOGGER.debug("BLE read captured %d frame(s): %s%s", len(bodies), seen,
+                          "" if any(b[:1] == bytes([_STATE_TYPE]) for b in bodies)
+                          else " -- no 0x0f state frame (grill not streaming it?)")
+        return bodies
+
+    async def _safe_disconnect(self) -> None:
         try:
-            await self._handshake()
-            frames = [self._decode(f) for f in await self._link.collect(self._listen)]
-        except TransportError:
-            raise
-        except Exception as err:  # noqa: BLE001 - normalise radio errors
-            raise TransportError(f"BLE read failed: {err}") from err
-        bodies = [d["command"] for d in frames if d and d["command"]]
-        for body in bodies:
-            if body[:1] == bytes([_INFO_TYPE]):
-                parsed = bp.parse_grill_info(body)
-                if parsed:
-                    self.info = parsed
-        state = _latest(bodies, _STATE_TYPE)
-        return _combined_state(dsn, state)
+            await self._link.disconnect()
+        except Exception:  # noqa: BLE001 - freeing the slot is best-effort
+            pass
 
     async def start_cook(self, dsn: str, *, mode: str, seconds: int, temp: int,
                          smoke: bool = False, skip_preheat: bool = False,
