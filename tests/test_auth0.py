@@ -150,3 +150,46 @@ async def test_token_without_expiry_lasts_an_hour(hass, aioclient_mock, freezer)
     freezer.tick(600)
     await auth.id_token(http)
     assert _grants(aioclient_mock) == 2
+
+
+# ---------------------------------------------------------------- NA region
+# login.sharkninja.com (NA) flags the plain password grant as a bot
+# ("requires_verification") for some accounts; the fallback is Auth0's
+# cross-origin /co/authenticate + PKCE flow (issue #2). All requests are
+# mocked — nothing here touches the real Auth0 tenant.
+
+NA_AUTH0 = "https://login.sharkninja.com/oauth/token"
+NA_COAUTH = "https://login.sharkninja.com/co/authenticate"
+NA_AUTHORIZE_PREFIX = "https://login.sharkninja.com/authorize"
+
+
+def _na_session():
+    return Auth0Session("a@b.c", "pw", make_region("NA"))
+
+
+async def test_na_login_goes_straight_through_pkce(hass, aioclient_mock):
+    # NA never tries the plain password grant first (that's what trips the
+    # tenant's bot detection) — it goes straight through co/authenticate ->
+    # /authorize (-> redirect carrying ?code=) -> code exchange.
+    aioclient_mock.post(NA_COAUTH, json={"login_ticket": "tkt-123"})
+    aioclient_mock.get(
+        NA_AUTHORIZE_PREFIX, status=302,
+        headers={"Location": "com.sharkninja.ninja://login.sharkninja.com/ios/com.sharkninja.ninja/callback?code=abc123"},
+    )
+    aioclient_mock.post(NA_AUTH0, json={"id_token": jwt()})
+
+    token = await _na_session().id_token(async_get_clientsession(hass))
+    assert token == jwt()
+    assert sum(1 for _, url, _, _ in aioclient_mock.mock_calls if str(url) == NA_COAUTH) == 1
+    code_exchange = next(data for _, url, data, _ in aioclient_mock.mock_calls if str(url) == NA_AUTH0)
+    assert code_exchange["grant_type"] == "authorization_code"
+    assert code_exchange["code"] == "abc123"
+
+
+async def test_na_wrong_password_is_an_auth_error(hass, aioclient_mock):
+    # co/authenticate itself rejects bad credentials; the flow must stop there
+    # (no call to /authorize or the token endpoint).
+    aioclient_mock.post(NA_COAUTH, status=401, text="Wrong email or password.")
+    with pytest.raises(AuthError):
+        await _na_session().id_token(async_get_clientsession(hass))
+    assert sum(1 for _, url, _, _ in aioclient_mock.mock_calls if str(url) == NA_AUTHORIZE_PREFIX) == 0

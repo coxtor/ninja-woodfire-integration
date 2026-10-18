@@ -50,9 +50,9 @@ REGION_NA_DEFAULTS = dict(
     ayla_device_base="https://ads-field-39a9391a.aylanetworks.com",
     ayla_app_id="android_ninjakitchen_prod-gg-id",
     ayla_app_secret="android_ninjakitchen_prod-b85m9QC9-Pp-pTAWhoaJSzt-EhI",
-    # Only the EU AWS deployment has been observed; NA reuses it unverified.
-    aws_rest_base=REGION_EU_DEFAULTS["aws_rest_base"],
-    aws_api_key=REGION_EU_DEFAULTS["aws_api_key"],
+    # Captured from the Ninja iOS app (v1.28.0), Oct 2026.
+    aws_rest_base="https://stakra.slatra.thor.skegox.com",
+    aws_api_key="QQdbSrgicK2PxvACI1a2P5AN2xgO78Lw1VvnYczb",
 )
 
 REGION_DEFAULTS: dict[str, dict[str, str]] = {
