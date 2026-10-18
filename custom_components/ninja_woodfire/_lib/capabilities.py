@@ -128,7 +128,8 @@ WOODFIRE_PRO_XL = GrillCapabilities(
             temp_min=120, temp_max=240,
             temp_default=200, duration_default_s=1200,     # 20 min
             duration_max_s=5400,                           # 90 min
-            supports_smoke=False,
+            supports_smoke=True,     # the app and Ninja's EU docs allow Woodfire
+                                      # flavour alongside Air Crisp (issue #3)
             supports_probe=True,
         ),
     ),

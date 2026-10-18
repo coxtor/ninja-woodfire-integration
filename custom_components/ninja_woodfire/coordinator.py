@@ -302,6 +302,14 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
         if self.backend != "ble":
             return
         if time.monotonic() - self._beacon_at > _BEACON_TTL_S:
+            # No live beacon: we can't tell cooking from idle from the
+            # advertisement. If the GATT frame also gave nothing ("unknown" —
+            # a BLE connect can succeed while the grill is asleep, it just
+            # won't report state or advertise), the grill is most likely
+            # asleep rather than idle. Show that as "powered off" so the card
+            # offers Wake instead of a Start that the firmware will ignore.
+            if state.grill.state == "unknown":
+                state.grill.state = "powered_off"
             return
         # The lid switch, cook phase and display prompt are in the beacon too;
         # surface them even with no probe. The phase gives the local path its
@@ -334,6 +342,14 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
             state.grill.state = "cooking"
         elif self.beacon_phase in ("preheat", "ignition"):
             state.grill.state = self.beacon_phase
+        elif self.beacon_lid and self._cook_seen:
+            # Opening the lid mid-cook: the firmware's beacon phase bits read
+            # blank/idle while paused, which would otherwise look like the
+            # cook ending (and restarting when the lid closes again). Report
+            # the same "lid_open" paused state the cloud path already uses
+            # (in ACTIVE_STATES) so a lid flap during a cook can't be
+            # mistaken for a stop/restart.
+            state.grill.state = "lid_open"
         elif self.beacon_phase is None and not is_active(state):
             # A fresh beacon with no active phase means the grill is on but idle.
             # Pin it to "idle" so the card shows a stable "Ready" instead of
@@ -358,8 +374,12 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
                 state.grill.seconds_set = self.cook_setting_seconds
                 state.grill.seconds_left = left
                 state.grill.end_time_utc = int(self._local_cook_end.timestamp())
-        elif state.grill.state != "cooking":
-            self._local_cook_end = None   # not cooking -> reset the estimate
+        elif state.grill.state not in ACTIVE_STATES:
+            # Only reset once the cook has actually ended (idle/done/off) —
+            # NOT for a mid-cook pause (lid_open/flip/get_food), or a lid flap
+            # or flip prompt would wipe the running timer and restart it from
+            # the full duration once cooking resumes.
+            self._local_cook_end = None
         if not any(t is not None for t in self.beacon_probes):
             return
         probes = []

@@ -466,6 +466,72 @@ async def test_beacon_cooking_phase_shows_grilling_with_configured_mode(hass, en
 
 
 @pytest.mark.asyncio
+async def test_asleep_grill_shows_powered_off_not_idle(hass, entry):
+    # A BLE connect can succeed while the grill is asleep (it just won't
+    # advertise a beacon or report a GATT state) -> grill.state "unknown".
+    # That must map to "powered_off" so the card offers Wake, not a dead Start.
+    from unittest.mock import AsyncMock
+    from custom_components.ninja_woodfire.coordinator import NinjaWoodfireCoordinator
+    from custom_components.ninja_woodfire._lib.capabilities import WOODFIRE_PRO_XL
+
+    ble = AsyncMock()
+    good = mk_state(grill={"state": "unknown"})
+    good.online = True
+    ble.get_combined_state.return_value = good
+    c = NinjaWoodfireCoordinator(hass, entry, None, DSN, WOODFIRE_PRO_XL, 0, ble=ble,
+                                 beacon_slot=_BEACON_SLOT)
+    await c.async_refresh()           # no beacon ever seen -> stale from the start
+    assert c.data.grill.state == "powered_off"
+
+
+@pytest.mark.asyncio
+async def test_lid_flap_mid_cook_does_not_fire_spurious_cook_events(hass, entry):
+    import time as _time
+    from unittest.mock import AsyncMock
+    from pytest_homeassistant_custom_component.common import async_capture_events
+    from custom_components.ninja_woodfire.coordinator import NinjaWoodfireCoordinator
+    from custom_components.ninja_woodfire.const import EVENT_COOK_STARTED, EVENT_COOK_DONE
+    from custom_components.ninja_woodfire._lib.capabilities import WOODFIRE_PRO_XL
+
+    ble = AsyncMock()
+    ble.get_combined_state.return_value = mk_state()
+    c = NinjaWoodfireCoordinator(hass, entry, None, DSN, WOODFIRE_PRO_XL, 0, ble=ble,
+                                 beacon_slot=_BEACON_SLOT)
+    await c.async_refresh()
+    c.cook_setting_seconds = 1800
+
+    # Get into an active cook (seed prev state so the next poll is a real
+    # transition) and let the timer start.
+    c.beacon_phase = "cooking"; c._beacon_at = _time.monotonic()
+    c._merge_beacon(c.data)
+    c._prev_grill_state = "cooking"
+    c._cook_seen = True
+    assert c.data.grill.seconds_set == 1800
+    local_end_before = c._local_cook_end
+
+    # Lid opens mid-cook: the beacon phase bits read blank while paused.
+    c.beacon_phase = None
+    c.beacon_lid = True
+    c._merge_beacon(c.data)
+    assert c.data.grill.state == "lid_open"      # not "idle"
+    assert c._local_cook_end == local_end_before  # timer NOT reset
+
+    started = async_capture_events(hass, EVENT_COOK_STARTED)
+    done = async_capture_events(hass, EVENT_COOK_DONE)
+    c._emit_lifecycle_events(c.data)
+    await hass.async_block_till_done()
+    assert started == []
+    assert done == []
+
+    # Lid closes again: back to cooking, timer keeps running (not restarted).
+    c.beacon_lid = False
+    c.beacon_phase = "cooking"
+    c._merge_beacon(c.data)
+    assert c.data.grill.state == "cooking"
+    assert c._local_cook_end == local_end_before
+
+
+@pytest.mark.asyncio
 async def test_local_ble_keeps_last_then_reports_offline(hass, entry):
     import time as _time
     from unittest.mock import AsyncMock
@@ -609,6 +675,28 @@ async def test_local_cook_timer_waits_for_lid_to_close(hass, entry):
     c.beacon_lid = False           # lid closed -> timer starts now
     c._merge_beacon(c.data)
     assert c.data.grill.seconds_set == 1800
+
+
+@pytest.mark.asyncio
+async def test_air_crisp_allows_smoke(hass, entry):
+    # Issue #3: Air Crisp + Woodfire flavour is a supported combination per the
+    # app and Ninja's EU docs; the capability gate must not strip smoke=True.
+    from unittest.mock import AsyncMock
+    from custom_components.ninja_woodfire.coordinator import NinjaWoodfireCoordinator
+    from custom_components.ninja_woodfire._lib.capabilities import WOODFIRE_PRO_XL
+
+    ble = AsyncMock()
+    good = mk_state()
+    good.online = True
+    ble.get_combined_state.return_value = good
+    c = NinjaWoodfireCoordinator(hass, entry, None, DSN, WOODFIRE_PRO_XL, 0, ble=ble,
+                                 beacon_slot=_BEACON_SLOT)
+    await c.async_refresh()
+
+    await c.async_modify_cook(mode="air crisp", smoke=True)
+    await c.async_start_cook()
+    assert ble.start_cook.call_args.kwargs["mode"] == "air crisp"
+    assert ble.start_cook.call_args.kwargs["smoke"] is True
 
 
 @pytest.mark.asyncio

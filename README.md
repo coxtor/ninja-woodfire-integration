@@ -16,7 +16,8 @@ Home Assistant — **fully local over Bluetooth**, or over the Ninja cloud.
 Developed against the `OG900-EU`, the only unit the author owns. Other Ninja
 Woodfire models likely speak the same protocol and could be supported with small
 tweaks — they're just untested here for lack of the hardware. **Pull requests
-adding other models are very welcome.**
+adding other models are very welcome.** Confirmed working: the UK **OG901UK**
+identifies itself as `OG900-EU` over the wire, so it's already fully supported.
 
 ## Two ways to connect
 
