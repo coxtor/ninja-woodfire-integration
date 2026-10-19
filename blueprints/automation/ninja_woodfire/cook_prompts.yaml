@@ -34,3 +34,6 @@ action:
     data:
       title: !input title
       message: "{{ messages.get(prompt, prompt) }}"
+
+variables:
+  notify_service: !input notify_service

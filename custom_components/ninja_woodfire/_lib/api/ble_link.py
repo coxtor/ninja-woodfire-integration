@@ -42,6 +42,9 @@ class HaBleLink:
         )
         if device is None:
             raise TransportError(f"grill {self._address} not in BLE range / no proxy")
+        # Session boundary: frames from a previous connection are not answers
+        # to anything we are about to send.
+        self._frames.clear()
         try:
             self._client = await establish_connection(
                 BleakClientWithServiceCache, device, self._address
@@ -63,9 +66,15 @@ class HaBleLink:
         await self._client.write_gatt_char(_B002, frame, response=True)
 
     async def collect(self, seconds: float) -> list[bytes]:
-        self._frames.clear()
+        """Frames seen since the last collect, plus whatever arrives now.
+
+        The queue is drained on the way out, never before the wait: a reply can
+        land while the triggering write/read is still in flight.
+        """
         await asyncio.sleep(seconds)
-        return list(self._frames)
+        frames = list(self._frames)
+        self._frames.clear()
+        return frames
 
     async def disconnect(self) -> None:
         if self._client is not None:

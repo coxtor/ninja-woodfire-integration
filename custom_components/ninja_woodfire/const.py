@@ -46,3 +46,9 @@ EVENT_COOK_DONE = "ninja_woodfire_cook_done"
 EVENT_PROBE_TARGET_REACHED = "ninja_woodfire_probe_target_reached"
 EVENT_PROBE_HALFWAY = "ninja_woodfire_probe_halfway"
 EVENT_PROMPT = "ninja_woodfire_prompt"
+# Fired when a local BLE start_cook produced no independent confirmation
+# (beacon never showed an active phase) within the grace window below — the
+# grill is most likely still asleep and ignored it. See
+# coordinator._verify_start_confirmed.
+EVENT_START_NOT_CONFIRMED = "ninja_woodfire_start_not_confirmed"
+START_CONFIRM_GRACE = timedelta(seconds=25)

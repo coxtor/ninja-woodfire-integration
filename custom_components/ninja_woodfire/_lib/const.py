@@ -123,12 +123,16 @@ GRILL_HEAT_LEVELS = {1: "Lo", 2: "Med", 3: "Hi"}
 PREHEAT_STATES = frozenset({"preheat", "preheating", "start", "ignition"})
 COOKING_STATES = frozenset({"cooking", "cook", "heat"})
 REST_STATES = frozenset({"rest", "resting"})
-PAUSED_STATES = frozenset({"flip", "get food", "get_food", "lid open", "lid_open"})
+# Steps inside a running cook where the grill waits for the user: the cook is
+# active (settings stay live, Wake must not stop it) but its timer is not running.
+PAUSED_STATES = frozenset(
+    {"flip", "get food", "get_food", "lid open", "lid_open", "insert_food"}
+)
 ACTIVE_STATES = PREHEAT_STATES | COOKING_STATES | REST_STATES | PAUSED_STATES
 # The grill waits for the lid to close before (re)starting; not a running cook.
 WAITING_STATES = frozenset({"wait lid closed before cook"})
 # Not heating (compared casefolded). "done" is excluded: the chamber is still hot.
-IDLE_STATES = frozenset({"idle", "none", "powered off", "unknown", ""})
+IDLE_STATES = frozenset({"idle", "none", "powered off", "powered_off", "unknown", ""})
 
 PROBE_MODE_MANUAL = "manual"
 PROBE_MODE_PRESET = "preset"

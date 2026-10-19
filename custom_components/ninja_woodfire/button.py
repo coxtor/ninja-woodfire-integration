@@ -40,6 +40,9 @@ BUTTONS: tuple[NinjaButtonDescription, ...] = (
         always_available=True,
         press_fn=lambda c: c.async_skip_preheat(),
     ),
+    # Wake is a local-BLE feature: only the radio can rouse a sleeping grill.
+    # On the cloud backends (including a hybrid entry that has fallen back to
+    # cloud) the press is a no-op plus a refresh.
     NinjaButtonDescription(
         key="wake",
         translation_key="wake",

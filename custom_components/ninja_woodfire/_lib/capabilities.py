@@ -55,6 +55,11 @@ class GrillCapabilities:
         return None
 
 
+# Meat-probe target range the firmware accepts, in °C.
+PROBE_TARGET_MIN_C = 30
+PROBE_TARGET_MAX_C = 110
+
+
 # ----------------------------------------------------- Woodfire Pro XL OG900-EU
 
 WOODFIRE_PRO_XL = GrillCapabilities(

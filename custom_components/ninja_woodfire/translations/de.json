@@ -9,17 +9,24 @@
       },
       "cloud": {
         "title": "Ninja Woodfire",
-        "description": "Mit deinem Ninja-Kitchen-Account anmelden. Die sechs erweiterten Felder leer lassen — sie sind nur ein Fallback falls die mitgelieferten Defaults nicht mehr funktionieren. Anleitung zum selbst-Extrahieren in der Projekt-README.",
+        "description": "Mit deinem Ninja-Kitchen-Account anmelden. Der erweiterte Bereich unten ist nur ein Fallback falls die mitgelieferten Defaults nicht mehr funktionieren — Anleitung zum selbst-Extrahieren in der Projekt-README.",
         "data": {
           "email": "E-Mail",
           "password": "Passwort",
-          "region": "Region",
-          "auth0_audience": "Auth0 Audience (optional)",
-          "auth0_client_id": "Auth0 Client-ID (optional)",
-          "ayla_app_id": "Cloud-App-ID (optional)",
-          "ayla_app_secret": "Cloud-App-Secret (optional)",
-          "aws_api_base": "AWS-API-Basis-URL (optional)",
-          "aws_api_key": "AWS-API-Schlüssel (optional)"
+          "region": "Region"
+        },
+        "sections": {
+          "advanced_options": {
+            "name": "Erweitert (Hersteller-Credential-Overrides)",
+            "data": {
+              "auth0_audience": "Auth0 Audience",
+              "auth0_client_id": "Auth0 Client-ID",
+              "ayla_app_id": "Cloud-App-ID",
+              "ayla_app_secret": "Cloud-App-Secret",
+              "aws_api_base": "AWS-API-Basis-URL",
+              "aws_api_key": "AWS-API-Schlüssel"
+            }
+          }
         }
       },
       "pick_device": {
@@ -30,7 +37,7 @@
       },
       "local": {
         "title": "Lokale Steuerung über Bluetooth",
-        "description": "Kein Konto nötig. Der Grill wird über Bluetooth gefunden (ESPHome-Proxys funktionieren). Die lokale Steuerung braucht einmalig einen Key-Blob, den du aus deiner eigenen Kopie der Hersteller-App extrahierst — siehe README der Integration.",
+        "description": "Kein Konto nötig. Der Grill wird über Bluetooth gefunden (ESPHome-Proxys funktionieren). Die lokale Steuerung braucht einmalig einen Key-Blob, den du aus deiner eigenen Kopie der Hersteller-App extrahierst — siehe README der Integration. Lieber Cloud-Steuerung? Hier abbrechen und die Integration manuell über Einstellungen → Geräte & Dienste hinzufügen — dort gibt es die Wahl zwischen Cloud und Lokal.",
         "data": {
           "ble_address": "Bluetooth-Adresse (leer lassen für automatische Erkennung)",
           "ble_slots": "Key-Blob (die komplette Ausgabe des Extraktions-Skripts einfügen)"
@@ -178,6 +185,9 @@
       },
       "cloud_connected": {
         "name": "Cloud-Verbindung"
+      },
+      "ble_connected": {
+        "name": "BLE-GATT-Verbindung"
       }
     },
     "select": {
@@ -225,6 +235,54 @@
       },
       "wake": {
         "name": "Aufwecken"
+      }
+    }
+  },
+  "services": {
+    "configure_cook": {
+      "name": "Garvorgang konfigurieren",
+      "description": "Mehrere Gareinstellungen in einem einzigen Befehl anwenden, damit sie sich nicht gegenseitig überschreiben.",
+      "fields": {
+        "mode": {
+          "name": "Garmodus",
+          "description": "Zu verwendender Garmodus, z. B. roast oder smoker."
+        },
+        "temp": {
+          "name": "Temperatur",
+          "description": "Zieltemperatur in °C bzw. Grillstufe 1-3 im Grillmodus."
+        },
+        "duration": {
+          "name": "Dauer",
+          "description": "Gesamte Gardauer in Minuten (inklusive der bereits vergangenen Zeit)."
+        },
+        "smoke": {
+          "name": "Woodfire-Aroma",
+          "description": "Rauch-/Woodfire-Aromatechnologie aktivieren."
+        },
+        "skip_preheat": {
+          "name": "Vorheizen überspringen",
+          "description": "Die Vorheizphase überspringen."
+        },
+        "probe_0_enabled": {
+          "name": "Ziel Fühler 1 aktiv",
+          "description": "Mit Zieltemperatur für Fleischfühler 1 garen."
+        },
+        "probe_0_target": {
+          "name": "Ziel Fühler 1",
+          "description": "Zieltemperatur für Fleischfühler 1 in °C."
+        },
+        "probe_1_enabled": {
+          "name": "Ziel Fühler 2 aktiv",
+          "description": "Mit Zieltemperatur für Fleischfühler 2 garen."
+        },
+        "probe_1_target": {
+          "name": "Ziel Fühler 2",
+          "description": "Zieltemperatur für Fleischfühler 2 in °C."
+        },
+        "start": {
+          "name": "Starten",
+          "description": "Den Garvorgang mit diesen Einstellungen starten statt sie nur vorzumerken."
+        }
       }
     }
   }

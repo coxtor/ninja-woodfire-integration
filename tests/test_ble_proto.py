@@ -176,3 +176,23 @@ def test_parse_grill_info():
     assert info["model"] == "AC000W036025444"
     assert info["serial"] == "SND000000000000"
     assert bp.parse_grill_info(b"\x0f\x00") == {}
+
+
+def test_short_frames_are_rejected_without_an_exception():
+    # I-09: a 16-byte frame passes the magic check but has no length byte, so
+    # reading it raised IndexError. Every under-sized frame must be rejected.
+    key, iv = bytes(range(32)), bytes(range(16))
+    pt = bytearray(16)
+    pt[4:8] = struct.pack("<I", bp.FRAME_MAGIC)
+    forged = bp.encrypt(bp._mask(bytes(pt)), key, iv)
+    assert len(forged) == 16
+    assert bp.decode_frame(forged, key, iv) is None
+
+    for size in range(32):
+        assert bp.decode_frame(bytes(size), key, iv) is None
+
+
+def test_a_full_frame_still_decodes():
+    key, iv = bytes(range(32)), bytes(range(16))
+    frame = bp.encode_frame(bp.CONNECT_CMD, key, iv, token=7)
+    assert bp.decode_frame(frame, key, iv)["token"] == 7

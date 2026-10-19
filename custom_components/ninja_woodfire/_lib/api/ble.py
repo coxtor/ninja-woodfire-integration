@@ -99,11 +99,25 @@ class BleTransport:
         raise TransportError("no session token from grill (CONNECT not accepted)")
 
     async def _send_command(self, command: bytes) -> None:
+        """One command over a fresh session; the link is always released again.
+
+        Not retried: a start may already have been applied, and blindly
+        re-sending it would re-ignite the grill.
+        """
         async with self._lock:
-            token, _ = await self._handshake()
-            await self._link.write_b002(
-                bp.encode_frame(command, self._tx_key, self._tx_nonce, token=token)
-            )
+            try:
+                token, _ = await self._handshake()
+                await self._link.write_b002(
+                    bp.encode_frame(command, self._tx_key, self._tx_nonce, token=token)
+                )
+            except TransportError:
+                raise
+            except Exception as err:  # noqa: BLE001 - normalise radio errors
+                raise TransportError(f"BLE command failed: {err}") from err
+            finally:
+                # Release the link: the grill only broadcasts its probe / lid /
+                # phase beacon while nothing is connected.
+                await self._safe_disconnect()
 
     # -- GrillTransport -----------------------------------------------------
 
@@ -130,14 +144,13 @@ class BleTransport:
                             parsed = bp.parse_grill_info(body)
                             if parsed:
                                 self.info = parsed
-                    # Release the link so the grill resumes advertising: its probe
-                    # / lid / phase beacon is only broadcast while nothing is
-                    # connected.
-                    await self._safe_disconnect()
                     return _combined_state(dsn, _latest(bodies, _STATE_TYPE))
-                # This attempt failed: drop the connection so the proxy slot is
-                # freed for the retry (and other devices), then back off.
-                await self._safe_disconnect()
+                finally:
+                    # Release the link after every attempt — on success, on
+                    # failure and on cancellation. The grill only advertises its
+                    # probe / lid / phase beacon while nothing is connected, and
+                    # a retry needs the proxy slot free.
+                    await self._safe_disconnect()
                 if attempt + 1 < self._read_attempts:
                     _LOGGER.debug("BLE read attempt %d/%d failed (%s); retrying",
                                   attempt + 1, self._read_attempts, last_err)

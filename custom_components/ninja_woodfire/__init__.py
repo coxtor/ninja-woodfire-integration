@@ -3,19 +3,28 @@ from __future__ import annotations
 
 import logging
 
+import voluptuous as vol
+
 from homeassistant.const import CONF_EMAIL, CONF_PASSWORD, Platform
-from homeassistant.core import HomeAssistant, callback
-from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
+from homeassistant.core import HomeAssistant, ServiceCall, callback
+from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady, ServiceValidationError
+from homeassistant.helpers import config_validation as cv, device_registry as dr
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from ._lib.api.auth0 import Auth0Session
 from ._lib.api.aws import AwsCloudClient
 from ._lib.api.ayla import AylaCloudClient
 from ._lib.api.errors import AuthError, TransportError
-from ._lib.capabilities import WOODFIRE_PRO_XL, for_oem_model
-from ._lib.const import make_region
+from ._lib.capabilities import (
+    PROBE_TARGET_MAX_C,
+    PROBE_TARGET_MIN_C,
+    WOODFIRE_PRO_XL,
+    for_oem_model,
+)
+from ._lib.const import COOK_MODES, make_region
 
 from .const import (
+    DOMAIN,
     CONF_AWS_API_BASE,
     CONF_AWS_API_KEY,
     CONF_AUTH0_AUDIENCE,
@@ -43,7 +52,33 @@ PLATFORMS: list[Platform] = [
 ]
 
 
+SERVICE_CONFIGURE_COOK = "configure_cook"
+
+# One atomic "apply these cook settings" call. Changing several settings through
+# the per-field entities fires several commands, each re-sending the whole cook;
+# this applies them together so they cannot overwrite each other.
+# Ranges here are the firmware's outer bounds; what the grill actually supports
+# per mode is checked against its capabilities in the coordinator.
+_PROBE_TARGET = vol.All(
+    vol.Coerce(int), vol.Range(min=PROBE_TARGET_MIN_C, max=PROBE_TARGET_MAX_C)
+)
+CONFIGURE_COOK_SCHEMA = vol.Schema({
+    vol.Required("device_id"): vol.All(cv.ensure_list, [cv.string]),
+    vol.Optional("mode"): vol.In(COOK_MODES),
+    vol.Optional("temp"): vol.All(vol.Coerce(int), vol.Range(min=1, max=300)),
+    vol.Optional("duration"): vol.All(vol.Coerce(int), vol.Range(min=1, max=1440)),  # minutes
+    vol.Optional("smoke"): cv.boolean,
+    vol.Optional("skip_preheat"): cv.boolean,
+    vol.Optional("probe_0_enabled"): cv.boolean,
+    vol.Optional("probe_0_target"): _PROBE_TARGET,
+    vol.Optional("probe_1_enabled"): cv.boolean,
+    vol.Optional("probe_1_target"): _PROBE_TARGET,
+    vol.Optional("start", default=False): cv.boolean,
+})
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: NinjaWoodfireConfigEntry) -> bool:
+    _register_services(hass)
     # Local-only (BLE) entries carry no account; set up without any cloud.
     if CONF_EMAIL not in entry.data:
         return await _async_setup_local(hass, entry)
@@ -152,6 +187,54 @@ async def _async_setup_local(hass: HomeAssistant, entry: NinjaWoodfireConfigEntr
     return True
 
 
+def _coordinators(hass: HomeAssistant, device_ids: list[str]) -> list:
+    registry = dr.async_get(hass)
+    found = []
+    for device_id in device_ids:
+        device = registry.async_get(device_id)
+        entries = device.config_entries if device else set()
+        for entry in (hass.config_entries.async_get_entry(e) for e in entries):
+            if entry is None or entry.domain != DOMAIN:
+                continue
+            if (coordinator := getattr(entry, "runtime_data", None)) is not None:
+                found.append(coordinator)
+    if not found:
+        raise ServiceValidationError(f"no Ninja Woodfire grill for {device_ids}")
+    return found
+
+
+def _register_services(hass: HomeAssistant) -> None:
+    if hass.services.has_service(DOMAIN, SERVICE_CONFIGURE_COOK):
+        return
+
+    async def configure_cook(call: ServiceCall) -> None:
+        data = call.data
+        probes = {}
+        for idx in (0, 1):
+            cfg = {
+                key: data[f"probe_{idx}_{field}"]
+                for key, field in (("enabled", "enabled"), ("setpoint", "target"))
+                if f"probe_{idx}_{field}" in data
+            }
+            if cfg:
+                probes[idx] = cfg
+        duration = data.get("duration")
+        for coordinator in _coordinators(hass, data["device_id"]):
+            await coordinator.async_configure_cook(
+                mode=data.get("mode"),
+                temp=data.get("temp"),
+                seconds=None if duration is None else int(duration) * 60,
+                smoke=data.get("smoke"),
+                skip_preheat=data.get("skip_preheat"),
+                probes=probes or None,
+                start=data["start"],
+            )
+
+    hass.services.async_register(
+        DOMAIN, SERVICE_CONFIGURE_COOK, configure_cook, schema=CONFIGURE_COOK_SCHEMA
+    )
+
+
 def _register_beacon(hass: HomeAssistant, entry: NinjaWoodfireConfigEntry, coordinator) -> None:
     """Passively read the grill's advertisement beacon for the probe temps + lid.
 
@@ -235,6 +318,10 @@ def _build_ble_transport(hass: HomeAssistant, entry: NinjaWoodfireConfigEntry):
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: NinjaWoodfireConfigEntry) -> bool:
+    # Release the transport only once the platforms are actually gone: on a
+    # failed unload the entities stay loaded and still need their data source.
+    if not await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
+        return False
     coordinator = entry.runtime_data
     if coordinator is not None:
         if getattr(coordinator, "beacon_unsub", None) is not None:
@@ -242,4 +329,4 @@ async def async_unload_entry(hass: HomeAssistant, entry: NinjaWoodfireConfigEntr
             coordinator.beacon_unsub = None
         if getattr(coordinator, "ble", None) is not None:
             await coordinator.ble.close()
-    return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    return True

@@ -9,17 +9,24 @@
       },
       "cloud": {
         "title": "Ninja Woodfire",
-        "description": "Sign in with your Ninja Kitchen account. Leave the six advanced fields below empty unless the bundled defaults stop working — see the project README for the extractor script if you need to override them.",
+        "description": "Sign in with your Ninja Kitchen account. The advanced section below is an expert escape hatch for when the bundled defaults stop working — see the project README for the extractor script if you need it.",
         "data": {
           "email": "Email",
           "password": "Password",
-          "region": "Region",
-          "auth0_audience": "Auth0 audience (optional)",
-          "auth0_client_id": "Auth0 client ID (optional)",
-          "ayla_app_id": "Cloud app ID (optional)",
-          "ayla_app_secret": "Cloud app secret (optional)",
-          "aws_api_base": "AWS API base URL (optional)",
-          "aws_api_key": "AWS API key (optional)"
+          "region": "Region"
+        },
+        "sections": {
+          "advanced_options": {
+            "name": "Advanced (vendor credential overrides)",
+            "data": {
+              "auth0_audience": "Auth0 audience",
+              "auth0_client_id": "Auth0 client ID",
+              "ayla_app_id": "Cloud app ID",
+              "ayla_app_secret": "Cloud app secret",
+              "aws_api_base": "AWS API base URL",
+              "aws_api_key": "AWS API key"
+            }
+          }
         }
       },
       "pick_device": {
@@ -30,7 +37,7 @@
       },
       "local": {
         "title": "Local control over Bluetooth",
-        "description": "No account needed. The grill is found over Bluetooth (ESPHome proxies work). Local control needs a one-time key bundle you extract from your own copy of the vendor app — see the integration README for the short how-to.",
+        "description": "No account needed. The grill is found over Bluetooth (ESPHome proxies work). Local control needs a one-time key bundle you extract from your own copy of the vendor app — see the integration README for the short how-to. Want cloud control instead? Cancel this and add the integration manually from Settings → Devices & Services — that offers a choice between cloud and local.",
         "data": {
           "ble_address": "Bluetooth address (leave empty to auto-detect)",
           "ble_slots": "Key bundle (paste the full output of the extraction script)"
@@ -178,6 +185,9 @@
       },
       "cloud_connected": {
         "name": "Cloud connection"
+      },
+      "ble_connected": {
+        "name": "BLE GATT connection"
       }
     },
     "select": {
@@ -225,6 +235,54 @@
       },
       "wake": {
         "name": "Wake"
+      }
+    }
+  },
+  "services": {
+    "configure_cook": {
+      "name": "Configure cook",
+      "description": "Apply several cook settings in a single command, so they cannot overwrite each other.",
+      "fields": {
+        "mode": {
+          "name": "Cook mode",
+          "description": "Cook mode to use, e.g. roast or smoker."
+        },
+        "temp": {
+          "name": "Temperature",
+          "description": "Target temperature in °C, or the heat level 1-3 in grill mode."
+        },
+        "duration": {
+          "name": "Duration",
+          "description": "Total cook duration in minutes (including the time already cooked)."
+        },
+        "smoke": {
+          "name": "Woodfire flavour",
+          "description": "Enable the smoke/Woodfire flavour technology."
+        },
+        "skip_preheat": {
+          "name": "Skip preheat",
+          "description": "Skip the preheat phase."
+        },
+        "probe_0_enabled": {
+          "name": "Probe 1 target enabled",
+          "description": "Cook with a target for meat probe 1."
+        },
+        "probe_0_target": {
+          "name": "Probe 1 target",
+          "description": "Target temperature for meat probe 1 in °C."
+        },
+        "probe_1_enabled": {
+          "name": "Probe 2 target enabled",
+          "description": "Cook with a target for meat probe 2."
+        },
+        "probe_1_target": {
+          "name": "Probe 2 target",
+          "description": "Target temperature for meat probe 2 in °C."
+        },
+        "start": {
+          "name": "Start",
+          "description": "Start the cook with these settings instead of only staging them."
+        }
       }
     }
   }

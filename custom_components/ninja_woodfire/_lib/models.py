@@ -29,6 +29,11 @@ def _parse_value(raw: Any) -> dict[str, Any]:
     return raw if isinstance(raw, dict) else {}
 
 
+def _map(value: Any) -> dict[str, Any]:
+    """A nested object, or an empty one. The cloud sends null/strings/lists too."""
+    return value if isinstance(value, dict) else {}
+
+
 def _float(value: Any, default: float | None = 0.0) -> float | None:
     try:
         f = float(value)
@@ -78,7 +83,8 @@ class GrillTemps:
     ui: float = 0.0    # PCB ADC, not °C
 
     @classmethod
-    def from_wire(cls, raw: dict[str, Any]) -> "GrillTemps":
+    def from_wire(cls, raw: Any) -> "GrillTemps":
+        raw = _map(raw)
         values = {}
         for name in vars(cls()):
             value = _float(raw.get(name), None)
@@ -116,6 +122,9 @@ class GrillState:
     seconds_set: int | None = None   # original cook duration in seconds
     seconds_left: int | None = None  # remaining time in seconds
     end_time_utc: int | None = None  # UNIX timestamp of cook end
+    # True when seconds_set/seconds_left/end_time_utc are a local estimate
+    # (BLE: the grill does not stream a timer frame) rather than firmware data.
+    timer_estimated: bool = False
     smoke: bool = False              # True if "Woodfire-Aromatechnologie" active
     error: int = 0                   # firmware error code, 0 = OK
     probes_active: int = 0           # 0/1/2
@@ -123,9 +132,9 @@ class GrillState:
     @classmethod
     def from_property_value(cls, raw: Any) -> "GrillState":
         d = _parse_value(raw)
-        inputs = d.get("inputs", {})
-        temps_raw = inputs.get("temps", {})
-        io = inputs.get("io", {})
+        inputs = _map(d.get("inputs"))
+        temps_raw = inputs.get("temps")
+        io = _map(inputs.get("io"))
         return cls(
             state=str(d.get("state", "unknown")),
             message=str(d.get("message", "")),
@@ -229,8 +238,8 @@ class ProbeInfo:
     state: str = "none"            # cooking | done | none | get_food | flip_food | …
 
     @classmethod
-    def from_dict(cls, d: dict[str, Any]) -> "ProbeInfo":
-        mode_obj = d.get("mode", {})
+    def from_dict(cls, d: Any) -> "ProbeInfo":
+        d = _map(d)
         state_obj = d.get("state", {})
         if isinstance(state_obj, dict):
             state = str(state_obj.get("state", "none"))
@@ -242,7 +251,7 @@ class ProbeInfo:
             active=bool(d.get("active", 0)),
             temp=_float(d.get("temp")),
             progress=_int(d.get("progress"), 0),
-            target=ProbeMode.from_dict(mode_obj if isinstance(mode_obj, dict) else {}),
+            target=ProbeMode.from_dict(_map(d.get("mode"))),
             state=state,
         )
 
@@ -255,9 +264,12 @@ class ProbeState:
     @classmethod
     def from_property_value(cls, raw: Any) -> "ProbeState":
         d = _parse_value(raw)
-        probes_raw = d.get("probes", []) or []
+        probes_raw = d.get("probes")
         return cls(
-            probes=[ProbeInfo.from_dict(p) for p in probes_raw],
+            probes=[
+                ProbeInfo.from_dict(p)
+                for p in (probes_raw if isinstance(probes_raw, list) else [])
+            ],
             raw=d,
         )
 

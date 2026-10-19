@@ -100,7 +100,10 @@ def encode_frame(command: bytes, key: bytes, iv: bytes, *, token: int = 0,
 
 def decode_frame(frame: bytes, key: bytes, iv: bytes) -> dict | None:
     """Decrypt + unmask a frame. Returns None if the magic does not match."""
-    if len(frame) < 16 or len(frame) % 16:
+    # The header alone (ids, magic, length byte) plus one command byte is 18
+    # bytes, so a real frame is at least two cipher blocks. Anything shorter
+    # has no length byte to read and is corrupt or forged.
+    if len(frame) < 32 or len(frame) % 16:
         return None
     pt = _mask(decrypt(frame, key, iv))
     if pt[4:8] != struct.pack("<I", FRAME_MAGIC):

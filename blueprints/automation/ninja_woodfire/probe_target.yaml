@@ -47,3 +47,4 @@ action:
 
 variables:
   notify_halfway: !input notify_halfway
+  notify_service: !input notify_service

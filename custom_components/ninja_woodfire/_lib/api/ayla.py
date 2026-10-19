@@ -6,7 +6,7 @@ import logging
 import json
 import time
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 import aiohttp
@@ -182,6 +182,15 @@ class AylaCloudClient:
         )
         return self._unwrap_list(await self._api("GET", url, params=params), "property")
 
+    @staticmethod
+    def _parse_timestamp(raw: Any) -> datetime | None:
+        """Ayla's report time, always timezone-aware (it omits the zone)."""
+        try:
+            ts = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        return ts if ts.tzinfo else ts.replace(tzinfo=timezone.utc)
+
     async def get_combined_state(self, dsn: str) -> CombinedState:
         """Read GET_GrillState + GET_CookState + GET_ProbeState in one round-trip."""
         props = await self.get_properties(dsn, names=ALL_READ_PROPERTIES)
@@ -190,14 +199,9 @@ class AylaCloudClient:
         for p in props:
             name = p.get("name")
             value = p.get("value")
-            updated_at_raw = p.get("data_updated_at")
-            if updated_at_raw:
-                try:
-                    ts = datetime.fromisoformat(updated_at_raw.replace("Z", "+00:00"))
-                    if latest_update is None or ts > latest_update:
-                        latest_update = ts
-                except ValueError:
-                    pass
+            ts = self._parse_timestamp(p.get("data_updated_at"))
+            if ts is not None and (latest_update is None or ts > latest_update):
+                latest_update = ts
             if name == PROP_GRILL_STATE:
                 state.grill = GrillState.from_property_value(value)
             elif name == PROP_COOK_STATE:

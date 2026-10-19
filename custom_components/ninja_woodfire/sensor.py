@@ -384,7 +384,9 @@ DIAGNOSTICS: tuple[NinjaDiagnosticDescription, ...] = (
         key="cloud_backend",
         translation_key="cloud_backend",
         info_key="backend",
-        icon="mdi:cloud",
+        # Reports "ble"/"ayla"/"aws" — not cloud-specific, despite the (stable,
+        # kept for backwards compatibility) entity key/translation_key.
+        icon="mdi:transit-connection-variant",
     ),
 )
 
@@ -403,6 +405,9 @@ CLOUD_SENSORS: tuple[NinjaCloudSensorDescription, ...] = (
         translation_key="last_report",
         device_class=SensorDeviceClass.TIMESTAMP,
         value_fn=lambda c: c.data.last_updated_at,
+        # Changes on every poll (every 3-10s while active) — would spam the
+        # logbook/history for anyone who hasn't explicitly asked for it.
+        entity_registry_enabled_default=False,
     ),
     NinjaCloudSensorDescription(
         key="wifi_signal",
@@ -418,6 +423,8 @@ CLOUD_SENSORS: tuple[NinjaCloudSensorDescription, ...] = (
         translation_key="last_successful_poll",
         device_class=SensorDeviceClass.TIMESTAMP,
         value_fn=lambda c: c.last_success_at,
+        # Same logbook-spam reasoning as last_report.
+        entity_registry_enabled_default=False,
     ),
     NinjaCloudSensorDescription(
         key="failed_polls",

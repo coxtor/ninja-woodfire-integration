@@ -11,6 +11,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
+from ._lib.capabilities import PROBE_TARGET_MAX_C, PROBE_TARGET_MIN_C
 from .coordinator import NinjaWoodfireConfigEntry, NinjaWoodfireCoordinator
 from .entity import NinjaWoodfireEntity
 
@@ -141,8 +142,8 @@ class ProbeSetpointNumber(NinjaWoodfireEntity, NumberEntity):
 
     _requires_live_state = False
     _attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
-    _attr_native_min_value = 30
-    _attr_native_max_value = 110
+    _attr_native_min_value = PROBE_TARGET_MIN_C
+    _attr_native_max_value = PROBE_TARGET_MAX_C
     _attr_native_step = 1
     _attr_mode = NumberMode.BOX
     _attr_entity_category = EntityCategory.CONFIG

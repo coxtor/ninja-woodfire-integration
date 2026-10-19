@@ -22,8 +22,9 @@ import json
 import re
 import subprocess
 import sys
-import time
+import threading
 from pathlib import Path
+from typing import Any
 
 # The app dumps a single-line Rust Debug of all known regions on startup,
 # e.g.:
@@ -50,33 +51,66 @@ REGION_BLOCK = re.compile(
 JWT = re.compile(r"eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+")
 
 
-def decode_jwt_audience(token: str) -> str | None:
-    """Return the api/v2/ audience URL from a JWT, or None."""
+def jwt_claims(token: str) -> dict[str, Any] | None:
     parts = token.split(".")
     if len(parts) != 3:
         return None
     payload = parts[1] + "=" * (-len(parts[1]) % 4)
     try:
-        decoded = base64.urlsafe_b64decode(payload)
-        claims = json.loads(decoded)
+        claims = json.loads(base64.urlsafe_b64decode(payload))
     except (ValueError, json.JSONDecodeError):
         return None
-    aud = claims.get("aud")
-    if isinstance(aud, str) and "/api/v2/" in aud:
-        return aud
-    if isinstance(aud, list):
-        for a in aud:
-            if isinstance(a, str) and "/api/v2/" in a:
-                return a
+    return claims if isinstance(claims, dict) else None
+
+
+def api_audience(aud: Any) -> str | None:
+    for value in aud if isinstance(aud, list) else [aud]:
+        if isinstance(value, str) and "/api/v2/" in value:
+            return value
     return None
 
 
-def find_audience(log: str) -> str | None:
+def find_audience(log: str, client_id: str | None = None) -> str | None:
+    """The api/v2 audience belonging to `client_id`.
+
+    A phone that has used several regions logs tokens for each of them.
+    Pairing one region's client id with another's audience yields a config
+    that cannot log in, so an audience that can't be tied to the requested
+    region is rejected rather than guessed.
+    """
+    matching: set[str] = set()
+    unbound: set[str] = set()
+    seen: set[str] = set()
     for token in JWT.findall(log):
-        aud = decode_jwt_audience(token)
-        if aud:
-            return aud
-    return None
+        claims = jwt_claims(token)
+        if claims is None:
+            continue
+        aud = api_audience(claims.get("aud"))
+        if aud is None:
+            continue
+        seen.add(aud)
+        azp = claims.get("azp") or claims.get("client_id")
+        if client_id and client_id in (claims.get("azp"), claims.get("client_id")):
+            matching.add(aud)
+        elif azp is None:
+            # No client binding at all: the token can't contradict the region.
+            unbound.add(aud)
+    candidates = matching or unbound or seen
+    if len(candidates) > 1:
+        raise SystemExit(
+            "error: the log holds auth0 audiences for more than one region "
+            f"({', '.join(sorted(candidates))}) and none of them could be tied "
+            "to the selected region's client id.\n"
+            "  - log out of the other region, then capture a fresh log"
+        )
+    if client_id and candidates and not matching and not unbound:
+        raise SystemExit(
+            f"error: the only auth0 audience in the log ({candidates.pop()}) "
+            "belongs to another region's client id.\n"
+            "  - log in to the app with the selected region's account, then "
+            "capture a fresh log"
+        )
+    return candidates.pop() if candidates else None
 
 
 def run_adb(args: list[str]) -> str:
@@ -101,7 +135,24 @@ def check_adb_device() -> None:
     print(f"adb: found device {lines[0].split()[0]}")
 
 
-def capture_logcat(seconds: int) -> str:
+def _drain(proc: subprocess.Popen, chunks: list[str]) -> None:
+    if proc.stdout is None:
+        return
+    for line in iter(proc.stdout.readline, ""):
+        chunks.append(line)
+
+
+def _terminate(proc: subprocess.Popen) -> None:
+    if proc.poll() is None:
+        proc.terminate()
+    try:
+        proc.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait(timeout=5)
+
+
+def capture_logcat(seconds: float) -> str:
     print("adb: clearing log buffer")
     subprocess.run(["adb", "logcat", "-c"], check=False)
     print(f"adb: capturing for {seconds}s — open the Ninja Kitchen app NOW")
@@ -113,22 +164,16 @@ def capture_logcat(seconds: int) -> str:
         text=True,
         errors="replace",
     )
-    deadline = time.time() + seconds
     chunks: list[str] = []
+    # Reading runs on a daemon thread: a logcat that stays silent would
+    # otherwise block in readline and keep the capture open indefinitely.
+    reader = threading.Thread(target=_drain, args=(proc, chunks), daemon=True)
+    reader.start()
     try:
-        while time.time() < deadline:
-            line = proc.stdout.readline() if proc.stdout else ""
-            if not line:
-                if proc.poll() is not None:
-                    break
-                continue
-            chunks.append(line)
+        reader.join(timeout=seconds)
     finally:
-        proc.terminate()
-        try:
-            proc.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            proc.kill()
+        _terminate(proc)
+        reader.join(timeout=5)
     return "".join(chunks)
 
 
@@ -147,14 +192,14 @@ def extract(log: str, region: str) -> dict[str, str]:
             "  - confirm the app actually opened during the capture window\n"
             "  - try increasing --seconds (default 30)"
         )
-    aud = find_audience(log)
+    creds = found[region]
+    aud = find_audience(log, creds["auth0_client_id"])
     if not aud:
         raise SystemExit(
             "error: auth0 audience not found in log.\n"
             "  - log in to the app during the capture so a fresh JWT is fetched\n"
             "  - if already logged in, log out and back in"
         )
-    creds = found[region]
     creds["auth0_audience"] = aud
     creds["region"] = region
     return creds

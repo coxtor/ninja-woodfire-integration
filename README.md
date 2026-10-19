@@ -13,11 +13,18 @@ Home Assistant — **fully local over Bluetooth**, or over the Ninja cloud.
 
 > Hobby project — Claude-assisted.
 
-Developed against the `OG900-EU`, the only unit the author owns. Other Ninja
-Woodfire models likely speak the same protocol and could be supported with small
-tweaks — they're just untested here for lack of the hardware. **Pull requests
-adding other models are very welcome.** Confirmed working: the UK **OG901UK**
-identifies itself as `OG900-EU` over the wire, so it's already fully supported.
+**Supported models**
+
+| Model | Region | Status |
+|---|---|---|
+| OG900-EU | EU | Developed and tested against this unit (author's own grill); local BLE + cloud |
+| OG901UK | UK | Reports itself as `OG900-EU` over the wire — works out of the box ([#3](https://github.com/coxtor/ninja-woodfire-integration/issues/3)) |
+| OG900 | NA | Cloud confirmed working by a community member ([#2](https://github.com/coxtor/ninja-woodfire-integration/issues/2)); local BLE untested on NA |
+| Other Woodfire variants | — | Likely the same protocol, untested for lack of the hardware |
+
+Other Ninja Woodfire models likely speak the same protocol and could be
+supported with small tweaks. **Pull requests adding/confirming other models
+are very welcome.**
 
 ## Two ways to connect
 
@@ -44,6 +51,25 @@ Matching Lovelace card: [ninja-woodfire-card](https://github.com/coxtor/ninja-wo
 - **Events** for automations: `cook_started`, `preheat_complete`,
   `cook_halftime`, `cook_done`, `probe_halfway`, `probe_target_reached`,
   `prompt` (all prefixed `ninja_woodfire_`).
+
+## Install & set up
+
+**Install (HACS):** HACS → Integrations → ⋮ → *Custom repositories* → add this
+repo as *Integration* → install → restart. *(Or copy
+`custom_components/ninja_woodfire/` manually and restart.)*
+
+**Set up:** *Settings → Devices & services → Add Integration → Ninja Woodfire*,
+then pick **Cloud** (sign in, pick your grill) or **Local** (paste the key bundle
+from *Local setup — extract your keys* below).
+
+Bluetooth discovery goes straight to the **Local** step, which needs a key
+bundle. To set up **Cloud** instead, use *Add Integration → Ninja Woodfire →
+Cloud* rather than the discovered card. Add **Local** as a separate entry the
+same way, once you have extracted your keys.
+
+If you set up Cloud, the next two sections (Local control, Local setup) don't
+apply — skip ahead to *Services*.
+
 
 ## Local control (no cloud)
 
@@ -118,15 +144,38 @@ Normally you only need `--app` — the rest are for edge cases.
 | `--mac AA:BB:…` | your grill's Bluetooth address; skips the scan. **Required if more than one grill is in range** (the tool refuses to guess). |
 | `--kdf 0x…` | override the key-routine address — only needed if auto-detection ever fails on a new build. |
 
-## Install & set up
 
-**Install (HACS):** HACS → Integrations → ⋮ → *Custom repositories* → add this
-repo as *Integration* → install → restart. *(Or copy
-`custom_components/ninja_woodfire/` manually and restart.)*
 
-**Set up:** *Settings → Devices & services → Add Integration → Ninja Woodfire*,
-then pick **Cloud** (sign in, pick your grill) or **Local** (paste the key bundle
-from *Local setup — extract your keys* above).
+## Services
+
+- **`ninja_woodfire.configure_cook`** — change several cook settings in one
+  atomic call instead of racing separate `number`/`switch`/`select` services.
+  Target a device; all fields are optional and only the ones you pass are
+  changed:
+
+  ```yaml
+  service: ninja_woodfire.configure_cook
+  target:
+    device_id: <your grill>
+  data:
+    mode: roast            # one of the supported cook modes
+    temp: 200               # °C — heat level 1–3 in grill mode, target temp otherwise
+    duration: 40             # total cook duration in MINUTES, including elapsed time
+    smoke: true
+    skip_preheat: false
+    probe_0_enabled: true
+    probe_0_target: 70       # °C
+    probe_1_enabled: false
+    probe_1_target: 70
+    start: false              # start the cook with these settings (default false)
+  ```
+
+  While a cook is running, this re-issues it once with all the changes merged
+  in — no lost updates from sending two settings at the same time. While idle,
+  values are only staged for the next cook unless `start: true`. The existing
+  per-field entities (`number.cook_temp`, `switch.cook_smoke`, etc.) still work
+  and go through the same lock, so nothing changes if you don't use this
+  service.
 
 ## Blueprints (one-click import)
 
@@ -137,6 +186,8 @@ service:
   [![Import blueprint](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2Fcoxtor%2Fninja-woodfire-integration%2Fblob%2Fmain%2Fblueprints%2Fautomation%2Fninja_woodfire%2Fcook_prompts.yaml)
 - **Meat probe reached target** (optionally also at halfway)
   [![Import blueprint](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2Fcoxtor%2Fninja-woodfire-integration%2Fblob%2Fmain%2Fblueprints%2Fautomation%2Fninja_woodfire%2Fprobe_target.yaml)
+
+
 
 ## Node-RED notifications
 

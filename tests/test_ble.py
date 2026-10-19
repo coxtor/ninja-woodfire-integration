@@ -190,7 +190,7 @@ async def test_persistent_failure_frees_slot_and_raises():
 @pytest.mark.asyncio
 async def test_command_after_disconnecting_poll_reconnects():
     # get_combined_state releases the link; a following command must reconnect
-    # (and never write while disconnected).
+    # (and never write while disconnected), then release it again.
     link = FakeLink([
         [_rx_frame(STATE_BODY, TOKEN)],            # poll handshake (token + state)
         [_rx_frame(b"\x10" + bytes(22), TOKEN)],   # command handshake
@@ -199,7 +199,8 @@ async def test_command_after_disconnecting_poll_reconnects():
     await t.get_combined_state("SND1")
     assert link.connected is False                 # poll released the link
     await t.stop_cook("SND1")                       # must reconnect, not assert
-    assert link.connected is True
+    assert link.b001_reads == 2                     # reconnected for the command
+    assert link.connected is False                  # ...and released it again
     assert bp.decode_frame(link.writes[-1], TX[0], TX[1])["command"] == bp.build_stop()
 
 
@@ -209,3 +210,79 @@ async def test_start_cook_rejects_bad_mode():
     t = BleTransport(TX, RX, link, listen_seconds=0.01)
     with pytest.raises(ValueError):
         await t.start_cook("SND1", mode="nonsense", seconds=600, temp=2)
+
+
+@pytest.mark.asyncio
+async def test_command_normalises_radio_errors_and_frees_the_link():
+    # I-06: a raw bleak/GATT error must surface as TransportError (HA turns that
+    # into a readable error) and must never leave the connection held.
+    link = FakeLink([], connect_errors=1)
+    t = BleTransport(TX, RX, link, listen_seconds=0.01)
+    with pytest.raises(TransportError):
+        await t.stop_cook("SND1")
+    assert link.disconnects == 1
+
+
+@pytest.mark.asyncio
+async def test_a_failing_write_frees_the_link():
+    class Broken(FakeLink):
+        async def write_b002(self, frame):
+            raise Exception("Bluetooth GATT Error handle=14 error=133")
+
+    link = Broken([[_rx_frame(b"\x10" + bytes(22), TOKEN)]])
+    t = BleTransport(TX, RX, link, listen_seconds=0.01)
+    with pytest.raises(TransportError):
+        await t.start_cook("SND1", mode="grill", seconds=600, temp=2)
+    assert link.disconnects == 1
+
+
+@pytest.mark.asyncio
+async def test_a_successful_command_releases_the_link_for_the_beacon():
+    # The grill only advertises its beacon while nothing is connected.
+    link = FakeLink([[_rx_frame(b"\x10" + bytes(22), TOKEN)]])
+    t = BleTransport(TX, RX, link, listen_seconds=0.01)
+    await t.stop_cook("SND1")
+    assert link.connected is False
+    assert bp.decode_frame(link.writes[-1], TX[0], TX[1])["command"] == bp.build_stop()
+
+
+@pytest.mark.asyncio
+async def test_a_cancelled_command_frees_the_link():
+    import asyncio
+
+    class Hanging(FakeLink):
+        async def write_b002(self, frame):
+            self.writes.append(frame)
+            await asyncio.sleep(10)
+
+    link = Hanging([[_rx_frame(b"\x10" + bytes(22), TOKEN)]])
+    t = BleTransport(TX, RX, link, listen_seconds=0.01)
+    task = asyncio.create_task(t.stop_cook("SND1"))
+    await asyncio.sleep(0.05)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert link.disconnects == 1
+
+
+@pytest.mark.asyncio
+async def test_a_cancelled_poll_frees_the_link():
+    # V-07: a cancelled poll must release the radio slot, or the reserved
+    # connection blocks the beacon and other proxy users until something else
+    # cleans up.
+    import asyncio
+
+    class Hanging(FakeLink):
+        async def collect(self, seconds):
+            await asyncio.sleep(10)
+            return []
+
+    link = Hanging([])
+    t = BleTransport(TX, RX, link, listen_seconds=0.01)
+    task = asyncio.create_task(t.get_combined_state("SND1"))
+    await asyncio.sleep(0.05)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert link.disconnects == 1
+    assert link.connected is False

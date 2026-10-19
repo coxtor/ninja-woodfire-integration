@@ -9,7 +9,14 @@ import voluptuous as vol
 
 from homeassistant.config_entries import ConfigFlow, ConfigFlowResult
 from homeassistant.const import CONF_EMAIL, CONF_PASSWORD
+from homeassistant.data_entry_flow import SectionConfig, section
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.selector import (
+    SelectOptionDict,
+    SelectSelector,
+    SelectSelectorConfig,
+    SelectSelectorMode,
+)
 
 from ._lib.api.ayla import AuthError, AylaCloudClient, TransportError
 from ._lib.const import REGION_DEFAULTS, make_region
@@ -46,8 +53,8 @@ def _nice_name(name: str | None, address: str | None) -> str:
     return cleaned
 
 # Standard form shows just the account info. The six vendor-credential
-# overrides are expert escape hatches (for when the bundled defaults rotate)
-# and only appear when the user has Home Assistant's "Advanced Mode" enabled.
+# overrides are expert escape hatches (for when the bundled defaults rotate);
+# they live in a collapsed section so they don't confuse everyone else.
 _ADVANCED_FIELDS = (
     CONF_AUTH0_AUDIENCE,
     CONF_AUTH0_CLIENT_ID,
@@ -56,20 +63,21 @@ _ADVANCED_FIELDS = (
     CONF_AWS_API_BASE,
     CONF_AWS_API_KEY,
 )
+_ADVANCED_SECTION = "advanced_options"
 
 
-def _user_schema(show_advanced: bool) -> vol.Schema:
-    fields: dict[Any, Any] = {
+def _user_schema() -> vol.Schema:
+    return vol.Schema({
         vol.Required(CONF_EMAIL): str,
         vol.Required(CONF_PASSWORD): str,
         vol.Optional(CONF_REGION, default=DEFAULT_REGION): vol.In(
             list(REGION_DEFAULTS.keys())
         ),
-    }
-    if show_advanced:
-        for key in _ADVANCED_FIELDS:
-            fields[vol.Optional(key, default="")] = str
-    return vol.Schema(fields)
+        vol.Optional(_ADVANCED_SECTION): section(
+            vol.Schema({vol.Optional(key, default=""): str for key in _ADVANCED_FIELDS}),
+            SectionConfig(collapsed=True),
+        ),
+    })
 
 
 def _opt(value: str | None) -> str | None:
@@ -109,6 +117,11 @@ class NinjaWoodfireConfigFlow(ConfigFlow, domain=DOMAIN):
     ) -> ConfigFlowResult:
         errors: dict[str, str] = {}
         if user_input is not None:
+            # Flatten the collapsed section so the rest of the flow (and
+            # async_step_pick_device, which persists these) can keep treating
+            # the overrides as plain top-level keys.
+            advanced = user_input.pop(_ADVANCED_SECTION, {}) or {}
+            user_input.update(advanced)
             region = make_region(
                 user_input.get(CONF_REGION, DEFAULT_REGION),
                 auth0_audience=_opt(user_input.get(CONF_AUTH0_AUDIENCE)),
@@ -144,18 +157,19 @@ class NinjaWoodfireConfigFlow(ConfigFlow, domain=DOMAIN):
 
         return self.async_show_form(
             step_id="cloud",
-            data_schema=_user_schema(self.show_advanced_options),
+            data_schema=_user_schema(),
             errors=errors,
         )
 
     async def async_step_local(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Local-only setup: no cloud account, just the grill's BLE address.
+        """Local-only setup: the grill's BLE address plus the pasted key bundle.
 
-        Identifies the grill over Bluetooth (service fcbb); the session keys are
-        derived at runtime from its public address. Needs a local Bluetooth
-        adapter or an ESPHome Bluetooth proxy in range.
+        Identifies the grill over Bluetooth (service fcbb). Nothing is derived
+        from the address: the session and beacon keys come from the bundle the
+        user extracts from their own copy of the vendor app (see the README).
+        Needs a local Bluetooth adapter or an ESPHome Bluetooth proxy in range.
         """
         discovered: dict[str, str] = {}
         try:
@@ -172,7 +186,12 @@ class NinjaWoodfireConfigFlow(ConfigFlow, domain=DOMAIN):
             discovered = {}
         errors: dict[str, str] = {}
         if user_input is not None:
-            address = (self._ble_address or user_input.get(CONF_BLE_ADDRESS) or "").strip()
+            # One spelling per grill: HaBleLink upper-cases the address, so the
+            # entry's unique id has to be canonical too or the same grill could
+            # be added twice.
+            address = (
+                self._ble_address or user_input.get(CONF_BLE_ADDRESS) or ""
+            ).strip().upper()
             blob = (user_input.get(CONF_BLE_SLOTS) or "").strip()
             if not address and len(discovered) == 1:
                 address = next(iter(discovered))
@@ -197,7 +216,18 @@ class NinjaWoodfireConfigFlow(ConfigFlow, domain=DOMAIN):
                               CONF_BLE_SLOTS: blob},
                     )
 
-        addr_field = vol.In(discovered) if discovered else str
+        # Offer what was discovered, but always allow typing an address: a grill
+        # reachable only through a proxy may not show up in the scan.
+        addr_field = SelectSelector(
+            SelectSelectorConfig(
+                options=[
+                    SelectOptionDict(value=address, label=label)
+                    for address, label in discovered.items()
+                ],
+                custom_value=True,
+                mode=SelectSelectorMode.DROPDOWN,
+            )
+        )
         return self.async_show_form(
             step_id="local",
             data_schema=vol.Schema({

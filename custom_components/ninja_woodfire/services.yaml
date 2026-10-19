@@ -1,0 +1,55 @@
+configure_cook:
+  target:
+    device:
+      integration: ninja_woodfire
+  fields:
+    mode:
+      example: roast
+      selector:
+        text:
+    temp:
+      example: 180
+      selector:
+        number:
+          min: 1
+          max: 300
+          mode: box
+    duration:
+      example: 40
+      selector:
+        number:
+          min: 1
+          max: 1440
+          unit_of_measurement: min
+          mode: box
+    smoke:
+      selector:
+        boolean:
+    skip_preheat:
+      selector:
+        boolean:
+    probe_0_enabled:
+      selector:
+        boolean:
+    probe_0_target:
+      example: 70
+      selector:
+        number:
+          min: 30
+          max: 110
+          unit_of_measurement: "°C"
+          mode: box
+    probe_1_enabled:
+      selector:
+        boolean:
+    probe_1_target:
+      example: 70
+      selector:
+        number:
+          min: 30
+          max: 110
+          unit_of_measurement: "°C"
+          mode: box
+    start:
+      selector:
+        boolean:

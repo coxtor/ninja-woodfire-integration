@@ -1,1 +1,4 @@
 pytest-homeassistant-custom-component
+# needed by homeassistant.components.bluetooth -> .usb / .zha imports
+aiousbwatcher
+serialx

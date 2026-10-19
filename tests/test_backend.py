@@ -11,7 +11,7 @@ from homeassistant.helpers import entity_registry as er
 from custom_components.ninja_woodfire._lib.api.aws import state_from_device
 from custom_components.ninja_woodfire._lib.api.errors import TransportError
 
-from .conftest import DEVICE, DOMAIN, DSN, aws_device, mk_state, mock_aws, setup_integration
+from .conftest import DEVICE, DOMAIN, DSN, aws_device, cooking, mk_state, mock_aws, setup_integration
 
 
 def _ayla(state=None):
@@ -124,11 +124,27 @@ async def test_user_flow_stores_aws_overrides(hass):
         r = await hass.config_entries.flow.async_init(DOMAIN, context={"source": config_entries.SOURCE_USER})
         r = await hass.config_entries.flow.async_configure(r["flow_id"], {"next_step_id": "cloud"})
         r = await hass.config_entries.flow.async_configure(r["flow_id"], {
-            "email": "a@b.c", "password": "x", "aws_api_base": " https://aws.invalid ", "aws_api_key": "",
+            "email": "a@b.c", "password": "x",
+            "advanced_options": {"aws_api_base": " https://aws.invalid ", "aws_api_key": ""},
         })
         r = await hass.config_entries.flow.async_configure(r["flow_id"], {"dsn": DSN})
     assert r["result"].data["aws_api_base"] == "https://aws.invalid"
     assert "aws_api_key" not in r["result"].data
+
+
+async def test_cloud_step_collapses_advanced_fields_into_a_section(hass):
+    """The six vendor-override fields live in a collapsed section, not flat
+    on the form — no reliance on the deprecated show_advanced_options."""
+    r = await hass.config_entries.flow.async_init(DOMAIN, context={"source": config_entries.SOURCE_USER})
+    r = await hass.config_entries.flow.async_configure(r["flow_id"], {"next_step_id": "cloud"})
+    schema = r["data_schema"].schema
+    (section_key,) = (k for k in schema if str(k) == "advanced_options")
+    section_validator = schema[section_key]
+    assert section_validator.options["collapsed"] is True
+    assert set(section_validator.schema.schema) == {
+        "auth0_audience", "auth0_client_id", "ayla_app_id",
+        "ayla_app_secret", "aws_api_base", "aws_api_key",
+    }
 
 
 async def test_without_aws_client_the_backend_is_ayla(coordinator):
@@ -532,6 +548,165 @@ async def test_lid_flap_mid_cook_does_not_fire_spurious_cook_events(hass, entry)
 
 
 @pytest.mark.asyncio
+async def test_stop_is_not_reverted_by_a_stale_beacon_still_saying_cooking(hass, entry):
+    # Real-world: Stop shows the optimistic "idle" immediately, but the
+    # grill's own beacon lags a few seconds behind the actual command and
+    # keeps advertising "cooking" for a bit -> must not flip the card back.
+    import time as _time
+    from unittest.mock import AsyncMock
+    from custom_components.ninja_woodfire.coordinator import NinjaWoodfireCoordinator
+    from custom_components.ninja_woodfire._lib.capabilities import WOODFIRE_PRO_XL
+
+    ble = AsyncMock()
+    ble.get_combined_state.return_value = mk_state()
+    c = NinjaWoodfireCoordinator(hass, entry, None, DSN, WOODFIRE_PRO_XL, 0, ble=ble,
+                                 beacon_slot=_BEACON_SLOT)
+    await c.async_refresh()
+    c.beacon_phase = "cooking"; c._beacon_at = _time.monotonic()
+    c._merge_beacon(c.data)
+    assert c.data.grill.state == "cooking"
+
+    await c.async_stop_cook()
+    assert c.data.grill.state == "idle"
+
+    # The beacon hasn't caught up yet and still says "cooking".
+    c.beacon_phase = "cooking"; c._beacon_at = _time.monotonic()
+    c._merge_beacon(c.data)
+    assert c.data.grill.state == "idle"
+
+    # Once the grace window has passed, a genuinely new cook (e.g. started at
+    # the grill itself) must still be able to show up again.
+    c._stop_issued_at -= 31
+    c._merge_beacon(c.data)
+    assert c.data.grill.state == "cooking"
+
+
+@pytest.mark.asyncio
+async def test_stop_grace_does_not_strand_a_fresh_poll_on_unknown(hass, entry):
+    # Real-world regression: a GATT poll during the stop-grace window builds
+    # a brand new CombinedState whose default grill.state is "unknown" (no
+    # 0x0f frame). The grace window must still resolve that to "idle" -- not
+    # leave "unknown" on screen until the 30s grace expires.
+    import time as _time
+    from unittest.mock import AsyncMock
+    from custom_components.ninja_woodfire.coordinator import NinjaWoodfireCoordinator
+    from custom_components.ninja_woodfire._lib.capabilities import WOODFIRE_PRO_XL
+    from custom_components.ninja_woodfire._lib.models import CombinedState, GrillState
+
+    ble = AsyncMock()
+    ble.get_combined_state.return_value = mk_state()
+    c = NinjaWoodfireCoordinator(hass, entry, None, DSN, WOODFIRE_PRO_XL, 0, ble=ble,
+                                 beacon_slot=_BEACON_SLOT)
+    await c.async_refresh()
+    c.beacon_phase = "cooking"; c._beacon_at = _time.monotonic()
+    c._merge_beacon(c.data)
+    await c.async_stop_cook()
+    assert c.data.grill.state == "idle"
+
+    # A fresh poll (no 0x0f frame) builds a brand new CombinedState whose
+    # default grill.state is "unknown" -- exactly what `_combined_state`
+    # returns in that case. The beacon is idle (no phase).
+    fresh = CombinedState(dsn=DSN, grill=GrillState())
+    assert fresh.grill.state == "unknown"
+    c.beacon_phase = None; c._beacon_at = _time.monotonic()
+    c._merge_beacon(fresh)
+    assert fresh.grill.state == "idle"
+
+
+@pytest.mark.asyncio
+async def test_unconfirmed_start_fires_an_event(hass, entry):
+    # Real-world: a sleeping grill can accept the BLE write for start_cook
+    # without acting on it. Nothing ever shows up on its beacon -> fire a
+    # clear signal instead of silently flickering back to idle unexplained.
+    from unittest.mock import AsyncMock, patch
+    from pytest_homeassistant_custom_component.common import async_capture_events
+    from custom_components.ninja_woodfire.coordinator import NinjaWoodfireCoordinator
+    from custom_components.ninja_woodfire.const import EVENT_START_NOT_CONFIRMED
+    from custom_components.ninja_woodfire._lib.capabilities import WOODFIRE_PRO_XL
+
+    ble = AsyncMock()
+    ble.get_combined_state.return_value = mk_state()
+    c = NinjaWoodfireCoordinator(hass, entry, None, DSN, WOODFIRE_PRO_XL, 0, ble=ble,
+                                 beacon_slot=_BEACON_SLOT)
+    await c.async_refresh()
+    c._burst_refresh = AsyncMock()
+    events = async_capture_events(hass, EVENT_START_NOT_CONFIRMED)
+
+    with patch("custom_components.ninja_woodfire.coordinator.asyncio.sleep", AsyncMock()):
+        await c.async_start_cook()
+        await hass.async_block_till_done()
+    assert [e.data["dsn"] for e in events] == [DSN]
+
+
+@pytest.mark.asyncio
+async def test_a_confirmed_start_fires_no_event(hass, entry):
+    import time as _time
+    from unittest.mock import AsyncMock, patch
+    from pytest_homeassistant_custom_component.common import async_capture_events
+    from custom_components.ninja_woodfire.coordinator import NinjaWoodfireCoordinator
+    from custom_components.ninja_woodfire.const import EVENT_START_NOT_CONFIRMED
+    from custom_components.ninja_woodfire._lib.capabilities import WOODFIRE_PRO_XL
+
+    ble = AsyncMock()
+    ble.get_combined_state.return_value = mk_state()
+    c = NinjaWoodfireCoordinator(hass, entry, None, DSN, WOODFIRE_PRO_XL, 0, ble=ble,
+                                 beacon_slot=_BEACON_SLOT)
+    await c.async_refresh()
+    c._burst_refresh = AsyncMock()
+    events = async_capture_events(hass, EVENT_START_NOT_CONFIRMED)
+
+    # The beacon independently confirms preheat right as the grace window
+    # would otherwise elapse.
+    async def _confirm_during_the_wait(_delay):
+        c.beacon_phase = "preheat"
+        c._beacon_at = _time.monotonic()
+        c._merge_beacon(c.data)
+
+    with patch("custom_components.ninja_woodfire.coordinator.asyncio.sleep", _confirm_during_the_wait):
+        await c.async_start_cook()
+        await hass.async_block_till_done()
+    assert events == []
+
+
+@pytest.mark.asyncio
+async def test_likely_asleep_tracks_unconfirmed_starts_and_clears_on_wake(hass, entry):
+    # The card uses this to offer Wake instead of Start before the next try.
+    import time as _time
+    from unittest.mock import AsyncMock, patch
+    from custom_components.ninja_woodfire.coordinator import NinjaWoodfireCoordinator
+    from custom_components.ninja_woodfire._lib.capabilities import WOODFIRE_PRO_XL
+
+    ble = AsyncMock()
+    ble.get_combined_state.return_value = mk_state()
+    c = NinjaWoodfireCoordinator(hass, entry, None, DSN, WOODFIRE_PRO_XL, 0, ble=ble,
+                                 beacon_slot=_BEACON_SLOT)
+    await c.async_refresh()
+    c._burst_refresh = AsyncMock()
+    assert c.likely_asleep is False
+
+    with patch("custom_components.ninja_woodfire.coordinator.asyncio.sleep", AsyncMock()):
+        await c.async_start_cook()
+        await hass.async_block_till_done()
+    assert c.likely_asleep is True
+
+    # Pressing Wake is an optimistic "the user just acted on it" -- move past
+    # the start's own pending-grace window and the still-"preheat" optimistic
+    # state first, or Wake's guard (confirmed standby only, never overtake a
+    # start plausibly in flight) would no-op here.
+    c.data.grill.state = "idle"
+    c._issued_at -= 31
+    c.async_request_refresh = AsyncMock()
+    await c.async_wake()
+    assert c.likely_asleep is False
+
+    # A genuinely confirmed start clears it too, independent of Wake.
+    c._likely_asleep = True
+    c.beacon_phase = "preheat"; c._beacon_at = _time.monotonic()
+    c._merge_beacon(c.data)
+    assert c.likely_asleep is False
+
+
+@pytest.mark.asyncio
 async def test_local_ble_keeps_last_then_reports_offline(hass, entry):
     import time as _time
     from unittest.mock import AsyncMock
@@ -742,3 +917,316 @@ async def test_fresh_idle_beacon_pins_state_to_idle(hass, entry):
     c._beacon_at = _time.monotonic()
     c._merge_beacon(c.data)
     assert c.data.grill.state == "idle"
+
+
+@pytest.mark.asyncio
+async def test_asleep_mid_cook_still_fires_cook_done(hass, entry):
+    # Regression: _merge_beacon can report grill_state "powered_off" (BLE connect
+    # succeeded but no beacon/0x0f, e.g. grill went to standby mid-cook) while
+    # state.online stays True, so _emit_lifecycle_events runs. IDLE_STATES must
+    # recognize "powered_off" (underscore, like the "idle"/"lid_open" dual
+    # spellings elsewhere) or the cook_done event — and the Node-RED
+    # notification depending on it — is permanently lost for that cook.
+    from unittest.mock import AsyncMock
+    from pytest_homeassistant_custom_component.common import async_capture_events
+    from custom_components.ninja_woodfire.coordinator import NinjaWoodfireCoordinator
+    from custom_components.ninja_woodfire.const import EVENT_COOK_DONE
+    from custom_components.ninja_woodfire._lib.capabilities import WOODFIRE_PRO_XL
+
+    ble = AsyncMock()
+    good = mk_state(cooking())
+    good.online = True
+    ble.get_combined_state.return_value = good
+    c = NinjaWoodfireCoordinator(hass, entry, None, DSN, WOODFIRE_PRO_XL, 0, ble=ble,
+                                 beacon_slot=_BEACON_SLOT)
+    await c.async_refresh()
+    assert c.data.grill.state == "cooking"
+
+    # Grill goes to standby mid-cook: BLE connect still succeeds (online stays
+    # True) but there's no fresh beacon and no GATT state -> "powered_off".
+    ble.get_combined_state.return_value = mk_state(grill={"state": "unknown"})
+    events = async_capture_events(hass, EVENT_COOK_DONE)
+    await c.async_refresh()
+    assert c.data.grill.state == "powered_off"
+    await hass.async_block_till_done()
+    assert any(e.data.get("reason") == "stopped" for e in events)
+
+
+@pytest.mark.asyncio
+async def test_ble_reachable_tracks_the_radio_independent_of_active_backend(hass, entry):
+    # Hybrid setup: cloud configured as fallback, BLE preferred. ble_reachable
+    # must reflect whether BLE itself answered this poll, not which backend's
+    # data ended up in `coordinator.data` (e.g. still True/False during a
+    # cloud-fallback poll that nonetheless rechecked BLE).
+    from unittest.mock import AsyncMock
+    from custom_components.ninja_woodfire.coordinator import NinjaWoodfireCoordinator
+    from custom_components.ninja_woodfire._lib.capabilities import WOODFIRE_PRO_XL
+
+    ble = AsyncMock()
+    ble.get_combined_state.return_value = mk_state()
+    cloud = _ayla()
+    c = NinjaWoodfireCoordinator(hass, entry, cloud, DSN, WOODFIRE_PRO_XL, 0, ble=ble,
+                                 beacon_slot=_BEACON_SLOT)
+    assert c.ble_reachable is None          # never tried yet
+
+    await c.async_refresh()
+    assert c.backend == "ble"
+    assert c.ble_reachable is True
+
+    # BLE fails this poll -> falls back to cloud for data, but ble_reachable
+    # must reflect the failed radio, not the cloud backend now in use.
+    ble.get_combined_state.side_effect = TransportError("no connect")
+    await c.async_refresh()
+    assert c.backend == "ayla"
+    assert c.ble_reachable is False
+
+
+@pytest.mark.asyncio
+async def test_ble_reachable_is_none_without_ble_configured(hass, entry):
+    from custom_components.ninja_woodfire.coordinator import NinjaWoodfireCoordinator
+    from custom_components.ninja_woodfire._lib.capabilities import WOODFIRE_PRO_XL
+
+    c = NinjaWoodfireCoordinator(hass, entry, _ayla(), DSN, WOODFIRE_PRO_XL, 0)
+    await c.async_refresh()
+    assert c.ble is None
+    assert c.ble_reachable is None
+
+
+@pytest.mark.asyncio
+async def test_ble_reachable_stays_false_across_repeated_failures_local_only(hass, entry):
+    # The actual real-world trigger: a local-only setup (no cloud client at
+    # all) where the grill's BLE sleep cycle makes every poll fail for a
+    # while. ble_reachable must stay False the whole time, not flip back to
+    # True/None with nothing to fall back to.
+    from unittest.mock import AsyncMock
+    from custom_components.ninja_woodfire.coordinator import NinjaWoodfireCoordinator
+    from custom_components.ninja_woodfire._lib.capabilities import WOODFIRE_PRO_XL
+
+    ble = AsyncMock()
+    ble.get_combined_state.return_value = mk_state()
+    c = NinjaWoodfireCoordinator(hass, entry, None, DSN, WOODFIRE_PRO_XL, 0, ble=ble,
+                                 beacon_slot=_BEACON_SLOT)
+    await c.async_refresh()
+    assert c.backend == "ble"
+    assert c.ble_reachable is True
+
+    ble.get_combined_state.side_effect = TransportError("not in BLE range / no proxy")
+    for _ in range(5):
+        await c.async_refresh()
+        assert c.ble_reachable is False
+
+
+def _local(hass, entry, state=None, slot=_BEACON_SLOT):
+    """A local-only (BLE) coordinator with a mocked radio."""
+    from unittest.mock import AsyncMock
+    from custom_components.ninja_woodfire.coordinator import NinjaWoodfireCoordinator
+    from custom_components.ninja_woodfire._lib.capabilities import WOODFIRE_PRO_XL
+
+    ble = AsyncMock()
+    good = state or mk_state()
+    good.online = True
+    ble.get_combined_state.return_value = good
+    c = NinjaWoodfireCoordinator(hass, entry, None, DSN, WOODFIRE_PRO_XL, 0,
+                                 ble=ble, beacon_slot=slot)
+    c._burst_refresh = AsyncMock()
+    return c, ble
+
+
+@pytest.mark.asyncio
+async def test_add_food_step_stays_an_active_cook_and_blocks_wake(hass, entry):
+    # I-01: "add food" is a wait step *inside* the cook. It must not look idle
+    # (settings stay live) and Wake must never send a Stop while it is showing.
+    import time as _time
+    from unittest.mock import AsyncMock
+
+    c, ble = _local(hass, entry)
+    await c.async_refresh()
+    c.beacon_phase = "cooking"
+    c.beacon_prompt = "addfood"
+    c._beacon_at = _time.monotonic()
+    c._merge_beacon(c.data)
+
+    assert c.data.grill.state == "insert_food"
+    assert c.is_cook_active is True
+
+    c.async_request_refresh = AsyncMock()
+    await c.async_wake()
+    ble.stop_cook.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_preheat_to_cooking_via_add_food_fires_one_start(hass, entry):
+    # I-01: preheat -> add food -> lid open -> cooking is ONE cook: exactly one
+    # cook_started, one preheat_complete and no cook_done in between.
+    import time as _time
+    from pytest_homeassistant_custom_component.common import async_capture_events
+    from custom_components.ninja_woodfire.const import (
+        EVENT_COOK_DONE,
+        EVENT_COOK_STARTED,
+        EVENT_PREHEAT_COMPLETE,
+    )
+
+    c, _ble = _local(hass, entry)
+    await c.async_refresh()
+    started = async_capture_events(hass, EVENT_COOK_STARTED)
+    preheat = async_capture_events(hass, EVENT_PREHEAT_COMPLETE)
+    done = async_capture_events(hass, EVENT_COOK_DONE)
+
+    def beacon(phase, prompt=None, lid=False):
+        c.beacon_phase, c.beacon_prompt, c.beacon_lid = phase, prompt, lid
+        c._beacon_at = _time.monotonic()
+        c._merge_beacon(c.data)
+        c._emit_lifecycle_events(c.data)
+
+    beacon("preheat")
+    assert c.data.grill.state == "preheat"
+    beacon("cooking", prompt="addfood")
+    assert c.data.grill.state == "insert_food"
+    beacon(None, lid=True)
+    assert c.data.grill.state == "lid_open"
+    beacon("cooking")
+    assert c.data.grill.state == "cooking"
+
+    await hass.async_block_till_done()
+    assert len(started) == 1
+    assert len(preheat) == 1
+    assert done == []
+
+
+@pytest.mark.asyncio
+async def test_wake_only_stops_a_positively_idle_grill(hass, entry):
+    # I-01: Wake must key off a confirmed standby/idle state, not "not active".
+    from unittest.mock import AsyncMock
+
+    c, ble = _local(hass, entry, mk_state(grill={"state": "idle"}))
+    await c.async_refresh()
+    c.async_request_refresh = AsyncMock()
+    await c.async_wake()
+    ble.stop_cook.assert_awaited_once()
+
+    ble.stop_cook.reset_mock()
+    c.data.grill.state = "insert_food"
+    await c.async_wake()
+    ble.stop_cook.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_a_vanished_probe_and_cleared_prompt_are_applied(hass, entry):
+    # I-07: a fresh beacon is a full snapshot of its own fields. Unplugging the
+    # probe / the prompt clearing must reach the entities, not be ignored
+    # because the new beacon carries "nothing" for those fields.
+    import time as _time
+
+    c, _ble = _local(hass, entry)
+    await c.async_refresh()
+    c._cook_seen = True
+    c.beacon_phase = "cooking"
+    c.beacon_probes = [53.0, None]
+    c.beacon_prompt = "flipfood"
+    c._beacon_at = _time.monotonic()
+    c._merge_beacon(c.data)
+    assert c.data.probes.probes[0].plugged_in is True
+    assert c.data.grill.prompt == "flipfood"
+
+    c.beacon_probes = [None, None]
+    c.beacon_prompt = None
+    c._merge_beacon(c.data)
+    assert c.data.probes.probes[0].plugged_in is False
+    assert c.data.grill.prompt is None
+
+
+@pytest.mark.asyncio
+async def test_a_repeated_prompt_fires_a_second_event(hass, entry):
+    # I-07: flipfood -> cleared -> flipfood must notify twice.
+    import time as _time
+    from pytest_homeassistant_custom_component.common import async_capture_events
+    from custom_components.ninja_woodfire.const import EVENT_PROMPT
+
+    c, _ble = _local(hass, entry)
+    await c.async_refresh()
+    c._cook_seen = True
+    c.beacon_phase = "cooking"
+    events = async_capture_events(hass, EVENT_PROMPT)
+
+    for prompt in ("flipfood", None, "flipfood"):
+        c.beacon_prompt = prompt
+        c._beacon_at = _time.monotonic()
+        c._merge_beacon(c.data)
+        c._emit_lifecycle_events(c.data)
+
+    await hass.async_block_till_done()
+    assert [e.data["prompt"] for e in events] == ["flipfood", "flipfood"]
+
+
+@pytest.mark.asyncio
+async def test_a_stale_beacon_stops_presenting_its_readings_as_current(hass, entry):
+    import time as _time
+
+    c, _ble = _local(hass, entry)
+    await c.async_refresh()
+    c._cook_seen = True
+    c.beacon_phase = "cooking"
+    c.beacon_probes = [53.0, None]
+    c.beacon_prompt = "flipfood"
+    c.beacon_lid = True
+    c._beacon_at = _time.monotonic()
+    c._merge_beacon(c.data)
+    assert c.data.probes.probes[0].temp == 53.0
+
+    c._beacon_at = _time.monotonic() - 999      # radio silence
+    c._merge_beacon(c.data)
+    assert c.data.probes.probes == []
+    assert c.data.grill.prompt is None
+    assert c.data.grill.lid_open is None
+
+
+@pytest.mark.asyncio
+async def test_the_estimated_timer_is_refreshed_on_every_merge(hass, entry, freezer):
+    # I-08: the estimate is recomputed each merge; it must not freeze at the
+    # value written into the state the first time round.
+    import time as _time
+
+    c, _ble = _local(hass, entry)
+    await c.async_refresh()
+    c.cook_setting_seconds = 600
+    c.beacon_phase = "cooking"
+    c._beacon_at = _time.monotonic()
+    c._merge_beacon(c.data)
+    assert c.data.grill.seconds_left == 600
+
+    freezer.tick(60)
+    c._beacon_at = _time.monotonic()
+    c._merge_beacon(c.data)
+    assert c.data.grill.seconds_left == 540
+
+
+@pytest.mark.asyncio
+async def test_a_live_duration_change_moves_the_estimated_end(hass, entry, freezer):
+    # I-08 acceptance: 600 s cook, after 120 s raised to 900 s total -> 780 s
+    # left; the next change must carry those 780 s, not the old remainder.
+    import time as _time
+
+    c, ble = _local(hass, entry)
+    await c.async_refresh()
+    c.cook_setting_seconds = 600
+    c.beacon_phase = "cooking"
+    c._beacon_at = _time.monotonic()
+    c._merge_beacon(c.data)
+
+    freezer.tick(120)
+    c._beacon_at = _time.monotonic()
+    c._merge_beacon(c.data)
+    assert c.data.grill.seconds_left == 480
+
+    calls = []
+    ble.start_cook.side_effect = lambda dsn, **kw: calls.append(kw)
+    await c.async_modify_cook(seconds=900)
+    sent = calls[-1]["seconds"]
+    assert abs(sent - 780) <= 1              # whole-second truncation only
+
+    c._merge_beacon(c.data)
+    assert c.data.grill.seconds_set == 900
+    assert c.data.grill.seconds_left == sent
+
+    await c.async_modify_cook(temp=2)
+    assert calls[-1]["seconds"] == sent      # the new remainder, not the old one

@@ -13,11 +13,19 @@ from typing import Any
 
 import aiohttp
 
-from ..const import COOK_MODES, CloudRegion
-from ..models import CombinedState, CookState, GrillState, ProbeState, _int, _parse_value
+from ..const import ACTIVE_STATES, COOK_MODES, CloudRegion
+from ..models import (
+    CombinedState,
+    CookState,
+    GrillState,
+    ProbeState,
+    _int,
+    _map,
+    _parse_value,
+)
 from .auth0 import Auth0Session
 from .commands import cook_command, stop_command
-from .errors import TransportError
+from .errors import NinjaCloudError, TransportError
 from .http import send
 
 _LOGGER = logging.getLogger(__name__)
@@ -75,7 +83,7 @@ def _timestamp(raw: Any) -> datetime | None:
 
 
 def _connected(device: dict[str, Any]) -> Any:
-    return (device.get("connectivityStatus") or {}).get("connected")
+    return _map(device.get("connectivityStatus")).get("connected")
 
 
 def is_connected(device: dict[str, Any]) -> bool:
@@ -90,9 +98,22 @@ def _reported_command(device: Any) -> Any:
     return reported.get("Cook_Command") if isinstance(reported, dict) else None
 
 
+def _command_matches(reported: Any, command: dict[str, Any]) -> bool:
+    """Whether the shadow reports back exactly the command we sent.
+
+    Every field we sent has to be there and match: an id alone (or any subset)
+    would equally fit a foreign or much older order.
+    """
+    if not isinstance(reported, dict) or "id" not in reported:
+        return False
+    reported, sent = normalise(reported), normalise(command)
+    return all(key in reported and reported[key] == value for key, value in sent.items())
+
+
 def state_from_device(dsn: str, device: dict[str, Any]) -> CombinedState:
     """Build the shared state model from one AWS device record."""
-    telemetry = device.get("telemetry") or {}
+    device = _map(device)
+    telemetry = _map(device.get("telemetry"))
     connected = _connected(device)
 
     def blob(name: str) -> dict[str, Any]:
@@ -108,6 +129,75 @@ def state_from_device(dsn: str, device: dict[str, Any]) -> CombinedState:
         last_updated_at=_timestamp(device.get("updatedAt")),
         rssi=_int(telemetry.get("RSSI")),
     )
+
+
+def _cook_progress(device: Any) -> tuple[dict[str, Any], bool]:
+    """(cook-relevant telemetry, whether a cook is running).
+
+    Deliberately ignores RSSI, connectivity and server timestamps: those move
+    on their own and must never pass for the grill applying our command.
+    """
+    state = state_from_device("", device if isinstance(device, dict) else {})
+    g, c = state.grill, state.cook
+    return (
+        {
+            "state": g.state,
+            "mode": g.mode,
+            "setpoint": g.setpoint,
+            "smoke": g.smoke,
+            "seconds set": g.seconds_set,
+            "seconds left": g.seconds_left,
+            "cook state": c.state,
+            "cook progress": c.progress,
+        },
+        g.state.casefold() in ACTIVE_STATES,
+    )
+
+
+# Fields a running cook moves on its own; a change in them alone is the timer
+# ticking, not the grill reacting to a command.
+_COUNTDOWN_FIELDS = ("seconds left", "cook progress")
+
+
+def _verifiable(sent: dict[str, Any]) -> bool:
+    """Whether telemetry can show every field of this command at all.
+
+    Probe targets never appear in the telemetry, grill mode sends a heat level
+    instead of the °C the grill reports back, and a skipped preheat is not
+    distinguishable from a preheat that simply ended. Commands carrying any of
+    those can only be confirmed by the shadow echoing them back.
+    """
+    if sent.get("probe0") is not None or sent.get("probe1") is not None:
+        return False
+    if sent.get("skip preheat"):
+        return False
+    return sent.get("mode") != "grill" or sent.get("temp") is None
+
+
+def _telemetry_confirms(before: dict[str, Any], after: dict[str, Any],
+                        command: dict[str, Any]) -> bool:
+    """Whether the telemetry shows *this* command applied.
+
+    Every field we sent has to be reflected, and something beyond the running
+    countdown has to have changed: a cook that merely moves from preheat to
+    cooking on its own would otherwise pass for an applied duration change.
+    """
+    sent = normalise(command)
+    if not _verifiable(sent):
+        return False
+    if not any(before.get(key) != value for key, value in after.items()
+               if key not in _COUNTDOWN_FIELDS):
+        return False
+    mode = sent.get("mode")
+    if mode is not None and after["mode"] != mode:
+        return False
+    if after["smoke"] is not None and int(bool(after["smoke"])) != int(bool(sent.get("smoke"))):
+        return False
+    if sent.get("temp") is not None and after["setpoint"] != sent["temp"]:
+        return False
+    if sent.get("seconds set") is not None and after["seconds set"] != sent["seconds set"]:
+        return False
+    return True
 
 
 class AwsCloudClient:
@@ -227,23 +317,60 @@ class AwsCloudClient:
         body = {"shadow": {"properties": {"desired": {"Cook_Command": command}}}}
         return await self._device_api(dsn, "PATCH", json=body)
 
-    async def _acknowledged(self, dsn: str, before: Any, telemetry: Any) -> bool:
-        """Whether the grill itself reacted: a new reported command or new telemetry."""
+    async def _acknowledged(
+        self,
+        dsn: str,
+        command: dict[str, Any],
+        before: dict[str, Any],
+        before_command: Any,
+    ) -> bool:
+        """Whether the grill itself applied *this* command.
+
+        Only two things count: the shadow newly reporting our own command back,
+        or the cook telemetry showing exactly this command applied. A command
+        that was already reported before we wrote, and a cook that merely keeps
+        counting down, confirm nothing.
+        """
+        echoed_before = _command_matches(before_command, command)
         for _ in range(_ACK_TIMEOUT_S // _ACK_POLL_S):
             await _sleep(_ACK_POLL_S)
             try:
-                if _reported_command(await self._device_api(dsn, "GET")) != before:
+                reported = _reported_command(await self._device_api(dsn, "GET"))
+                if not echoed_before and _command_matches(reported, command):
                     return True
                 device = await self.find_device(dsn)
             except TransportError as err:
                 _LOGGER.debug("reading back the cook command failed: %s", err)
                 continue
-            if device is not None and device.get("telemetry") != telemetry:
+            after, cooking = _cook_progress(device)
+            if cooking and _telemetry_confirms(before, after, command):
                 return True
         return False
 
     async def _withdraw(self, dsn: str) -> None:
         await self._send_cook_command(dsn, stop_command())
+
+    async def _withdraw_cancelled(self, dsn: str) -> None:
+        """Pull a queued start back while this call is being cancelled.
+
+        The withdrawal has to finish before we return: the caller releases the
+        command lock on return, and a Stop landing after the next command would
+        cancel that cook. Further cancellations (a second Stop press) therefore
+        do not end the wait.
+        """
+        task = asyncio.ensure_future(self._withdraw(dsn))
+        while True:
+            try:
+                await asyncio.shield(task)
+                return
+            except asyncio.CancelledError:
+                if task.done():
+                    raise
+            except NinjaCloudError as err:
+                _LOGGER.warning(
+                    "Withdrawing the cancelled start for %s failed: %s", dsn, err
+                )
+                return
 
     async def _start(self, dsn: str, command: dict[str, Any]) -> Any:
         """Send a start only to a connected grill and withdraw it unless acknowledged."""
@@ -252,12 +379,27 @@ class AwsCloudClient:
             raise TransportError(f"device {dsn} not found on the AWS backend")
         if not is_connected(device):
             raise TransportError("grill is not connected to the AWS cloud")
-        before = _reported_command(await self._device_api(dsn, "GET"))
-        result = await self._send_cook_command(dsn, command)
+        before, _cooking = _cook_progress(device)
+        # Refuse to write a start we would not be able to verify afterwards, and
+        # keep what the shadow already reported as the comparison baseline.
+        before_command = _reported_command(await self._device_api(dsn, "GET"))
+        # From here on the start may have reached the shadow, so every failure
+        # has to pull it back — an un-withdrawn start fires whenever the grill
+        # next connects.
         try:
-            acknowledged = await self._acknowledged(dsn, before, device.get("telemetry"))
+            result = await self._send_cook_command(dsn, command)
+            acknowledged = await self._acknowledged(dsn, command, before, before_command)
         except asyncio.CancelledError:
-            await asyncio.shield(self._withdraw(dsn))
+            await self._withdraw_cancelled(dsn)
+            raise
+        except NinjaCloudError as err:
+            try:
+                await self._withdraw(dsn)
+            except NinjaCloudError as undo:
+                raise TransportError(
+                    f"{err}; the start may have been queued and withdrawing it "
+                    f"also failed: {undo}"
+                ) from err
             raise
         if not acknowledged:
             try:

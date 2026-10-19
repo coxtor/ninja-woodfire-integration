@@ -16,7 +16,7 @@ from custom_components.ninja_woodfire._lib.api.aws import (
     state_from_device,
 )
 from custom_components.ninja_woodfire._lib.api.ayla import AylaCloudClient
-from custom_components.ninja_woodfire._lib.api.errors import TransportError
+from custom_components.ninja_woodfire._lib.api.errors import AuthError, TransportError
 from custom_components.ninja_woodfire._lib.const import make_region
 
 from .conftest import DSN, aws_device, jwt
@@ -78,11 +78,22 @@ def _patches(aioclient_mock):
 
 @pytest.fixture
 def backend(aioclient_mock):
+    """A grill that reports every command it is sent back in its shadow."""
     aioclient_mock.post(AUTH0, json={"id_token": jwt("auth0|user1")})
     aioclient_mock.get(HOUSEHOLDS, json={"households": ["hh1"]})
     aioclient_mock.get(DEVICES, json={"items": [aws_device()]})
-    _replies(aioclient_mock, DEVICE, "get", [_shadow({"id": 1000}), _shadow({"id": 1001})])
-    aioclient_mock.patch(DEVICE, json={})
+    desired: list[dict] = []
+
+    async def patched(method, url, data):
+        desired.append(data["shadow"]["properties"]["desired"]["Cook_Command"])
+        return AiohttpClientMockResponse(method, url, json={})
+
+    async def shadow(method, url, data):
+        applied = desired[-1] if desired else {"id": 1000}
+        return AiohttpClientMockResponse(method, url, json=_shadow(applied))
+
+    aioclient_mock.get(DEVICE, side_effect=shadow)
+    aioclient_mock.patch(DEVICE, side_effect=patched)
     return aioclient_mock
 
 
@@ -388,8 +399,9 @@ async def test_start_acknowledged_by_reported_command(hass, backend, sleep):
 async def test_start_acknowledged_by_new_telemetry(hass, aioclient_mock):
     aioclient_mock.post(AUTH0, json={"id_token": jwt("auth0|user1")})
     aioclient_mock.get(HOUSEHOLDS, json={"households": ["hh1"]})
-    idle, preheat = aws_device(), aws_device("aws_preheat")
-    _replies(aioclient_mock, DEVICES, "get", [{"items": [idle]}, {"items": [idle]}, {"items": [preheat]}])
+    before, applied = aws_device(), _cooking_device()
+    _replies(aioclient_mock, DEVICES, "get",
+             [{"items": [before]}, {"items": [before]}, {"items": [applied]}])
     _replies(aioclient_mock, DEVICE, "get", [_shadow({"id": 1000})])
     aioclient_mock.patch(DEVICE, json={})
     await _client(hass).start_cook(DSN, **START)
@@ -448,7 +460,7 @@ async def test_failing_polls_count_as_unacknowledged(hass, aioclient_mock):
 
 async def test_clearing_the_queued_command_may_fail(hass, aioclient_mock):
     _listing(aioclient_mock, {"connected": True})
-    _replies(aioclient_mock, DEVICE, "get", [_shadow({"id": 1000}), _shadow({"id": 1001})])
+    _replies(aioclient_mock, DEVICE, "get", [_shadow({"id": 1000}), _shadow(SENT)])
     _replies(aioclient_mock, DEVICE, "patch", [{}, 400])
     await _client(hass).start_cook(DSN, **START)
     assert [p and p["id"] for p in _patches(aioclient_mock)] == [1001, None]
@@ -532,3 +544,330 @@ async def test_404_from_the_device_list_re_resolves_the_household(hass, aioclien
 
 def test_waiting_for_lid_state_is_mapped_back():
     assert normalise({"state": "waitlidclosedbeforecook"}) == {"state": "wait lid closed before cook"}
+
+
+# ------------------------------------------------- I-03: acknowledgement correlation
+
+
+def _listing_sequence(aioclient_mock, devices):
+    aioclient_mock.post(AUTH0, json={"id_token": jwt("auth0|user1")})
+    aioclient_mock.get(HOUSEHOLDS, json={"households": ["hh1"]})
+    _replies(aioclient_mock, DEVICES, "get", [{"items": [d]} for d in devices])
+
+
+def _device(**telemetry):
+    device = aws_device()
+    device["connectivityStatus"] = {"connected": True}
+    device["telemetry"] = {**device["telemetry"], **telemetry}
+    return device
+
+
+async def test_rssi_change_alone_does_not_acknowledge(hass, aioclient_mock, sleep):
+    before, after = _device(RSSI=-51), _device(RSSI=-50)
+    _listing_sequence(aioclient_mock, [before, before, after, after])
+    _replies(aioclient_mock, DEVICE, "get", [_shadow()])
+    aioclient_mock.patch(DEVICE, json={})
+    with pytest.raises(TransportError, match="did not acknowledge"):
+        await _client(hass).start_cook(DSN, **START)
+    assert [p["id"] for p in _patches(aioclient_mock)] == [1001, 1000]
+
+
+async def test_connectivity_change_alone_does_not_acknowledge(hass, aioclient_mock, sleep):
+    before = _device()
+    after = aws_device()
+    after["connectivityStatus"] = {"connected": True, "lastSeen": "later"}
+    after["telemetry"] = before["telemetry"]
+    _listing_sequence(aioclient_mock, [before, before, after, after])
+    _replies(aioclient_mock, DEVICE, "get", [_shadow()])
+    aioclient_mock.patch(DEVICE, json={})
+    with pytest.raises(TransportError, match="did not acknowledge"):
+        await _client(hass).start_cook(DSN, **START)
+
+
+async def test_a_foreign_shadow_command_does_not_acknowledge(hass, aioclient_mock, sleep):
+    _listing_sequence(aioclient_mock, [_device()])
+    _replies(aioclient_mock, DEVICE, "get", [_shadow({"id": 1234, "mode": "grill"})])
+    aioclient_mock.patch(DEVICE, json={})
+    with pytest.raises(TransportError, match="did not acknowledge"):
+        await _client(hass).start_cook(DSN, **START)
+
+
+async def test_a_missing_reported_command_does_not_acknowledge(hass, aioclient_mock, sleep):
+    _listing_sequence(aioclient_mock, [_device()])
+    _replies(aioclient_mock, DEVICE, "get", [{"deviceId": "SND1", "shadow": {}}])
+    aioclient_mock.patch(DEVICE, json={})
+    with pytest.raises(TransportError, match="did not acknowledge"):
+        await _client(hass).start_cook(DSN, **START)
+
+
+async def test_a_real_cook_transition_acknowledges(hass, aioclient_mock, sleep):
+    before, after = _device(), _cooking_device(state="preheat")
+    _listing_sequence(aioclient_mock, [before, before, after])
+    _replies(aioclient_mock, DEVICE, "get", [_shadow()])
+    aioclient_mock.patch(DEVICE, json={})
+    await _client(hass).start_cook(DSN, **START)
+    assert [p and p["id"] for p in _patches(aioclient_mock)] == [1001, None]
+
+
+# ------------------------------------------------- I-04: the write phase is transactional
+
+
+def _raise_once(error, then):
+    calls = []
+
+    async def reply(method, url, data):
+        calls.append(url)
+        if len(calls) == 1:
+            raise error
+        return AiohttpClientMockResponse(method, url, json=then)
+
+    return reply
+
+
+async def test_a_lost_patch_response_withdraws_the_start(hass, aioclient_mock, sleep):
+    # The server may well have stored the start before the response was lost.
+    _listing_sequence(aioclient_mock, [_device()])
+    _replies(aioclient_mock, DEVICE, "get", [_shadow()])
+    _replies(aioclient_mock, DEVICE, "patch", [500, {}])
+    with pytest.raises(TransportError):
+        await _client(hass).start_cook(DSN, **START)
+    assert [p["id"] for p in _patches(aioclient_mock)] == [1001, 1000]
+
+
+async def test_cancellation_during_the_patch_withdraws_the_start(hass, aioclient_mock, sleep):
+    _listing_sequence(aioclient_mock, [_device()])
+    _replies(aioclient_mock, DEVICE, "get", [_shadow()])
+    aioclient_mock.patch(DEVICE, side_effect=_raise_once(asyncio.CancelledError(), {}))
+    with pytest.raises(asyncio.CancelledError):
+        await _client(hass).start_cook(DSN, **START)
+    assert [p["id"] for p in _patches(aioclient_mock)] == [1001, 1000]
+
+
+async def test_an_auth_failure_while_waiting_withdraws_the_start(hass, aioclient_mock, sleep):
+    _listing_sequence(aioclient_mock, [_device()])
+    _replies(aioclient_mock, DEVICE, "get", [_shadow()])
+    aioclient_mock.patch(DEVICE, json={})
+    client = _client(hass)
+    client._acknowledged = AsyncMock(side_effect=AuthError("session expired"))
+    with pytest.raises(AuthError):
+        await client.start_cook(DSN, **START)
+    assert [p["id"] for p in _patches(aioclient_mock)] == [1001, 1000]
+
+
+async def test_a_failed_withdrawal_after_a_failed_patch_is_not_reported_as_withdrawn(
+    hass, aioclient_mock, sleep
+):
+    _listing_sequence(aioclient_mock, [_device()])
+    _replies(aioclient_mock, DEVICE, "get", [_shadow()])
+    _replies(aioclient_mock, DEVICE, "patch", [500])
+    with pytest.raises(TransportError, match="withdrawing it also failed"):
+        await _client(hass).start_cook(DSN, **START)
+
+
+# ------------------------------------------------- V-01: the ack must correlate with the command
+
+SENT = {"id": 1001, "mode": "bake", "seconds set": 600, "temp": 180,
+        "smoke": 0, "skip preheat": 0}
+
+
+def _cooking_device(mode="bake", setpoint=180, left=600, total=600, state="cooking", smoke=0):
+    """A connected grill whose telemetry shows the given cook."""
+    device = _device()
+    device["telemetry"] = {
+        **device["telemetry"],
+        "GrillState": json.dumps({
+            "state": state, "mode": mode, "setpoint": setpoint, "smoke": smoke,
+            "secondsset": total, "secondsleft": left, "probesactive": 0,
+        }),
+        "CookState": json.dumps({"state": {"state": "heat", "progress": 10}}),
+    }
+    return device
+
+
+async def test_an_id_only_reported_command_does_not_acknowledge(hass, aioclient_mock, sleep):
+    _listing_sequence(aioclient_mock, [_device()])
+    _replies(aioclient_mock, DEVICE, "get", [_shadow({"id": 1000}), _shadow({"id": 1001})])
+    aioclient_mock.patch(DEVICE, json={})
+    with pytest.raises(TransportError, match="did not acknowledge"):
+        await _client(hass).start_cook(DSN, **START)
+    assert [p["id"] for p in _patches(aioclient_mock)] == [1001, 1000]
+
+
+async def test_an_unchanged_identical_reported_command_does_not_acknowledge(
+    hass, aioclient_mock, sleep
+):
+    # The very same command was already in the shadow before we wrote: reading
+    # it back proves nothing about *this* order.
+    _listing_sequence(aioclient_mock, [_device()])
+    _replies(aioclient_mock, DEVICE, "get", [_shadow(SENT)])
+    aioclient_mock.patch(DEVICE, json={})
+    with pytest.raises(TransportError, match="did not acknowledge"):
+        await _client(hass).start_cook(DSN, **START)
+
+
+async def test_a_matching_new_reported_command_acknowledges(hass, aioclient_mock, sleep):
+    _listing_sequence(aioclient_mock, [_device()])
+    _replies(aioclient_mock, DEVICE, "get", [_shadow({"id": 1000}), _shadow(SENT)])
+    aioclient_mock.patch(DEVICE, json={})
+    await _client(hass).start_cook(DSN, **START)
+    assert [p and p["id"] for p in _patches(aioclient_mock)] == [1001, None]
+
+
+async def test_the_countdown_of_a_running_cook_does_not_acknowledge(
+    hass, aioclient_mock, sleep
+):
+    # A cook that keeps running unchanged while its timer ticks down is not the
+    # grill applying our temperature change.
+    before = _cooking_device(mode="roast", setpoint=180, left=500)
+    after = _cooking_device(mode="roast", setpoint=180, left=498)
+    _listing_sequence(aioclient_mock, [before, before, after])
+    _replies(aioclient_mock, DEVICE, "get", [_shadow({"id": 1000})])
+    aioclient_mock.patch(DEVICE, json={})
+    with pytest.raises(TransportError, match="did not acknowledge"):
+        await _client(hass).start_cook(DSN, mode="roast", seconds=600, temp=200)
+    assert [p["id"] for p in _patches(aioclient_mock)] == [1001, 1000]
+
+
+async def test_telemetry_of_a_different_cook_does_not_acknowledge(hass, aioclient_mock, sleep):
+    # Someone started another cook on the grill: active, changed - but not ours.
+    before = _device()
+    after = _cooking_device(mode="roast", setpoint=220)
+    _listing_sequence(aioclient_mock, [before, before, after])
+    _replies(aioclient_mock, DEVICE, "get", [_shadow({"id": 1000})])
+    aioclient_mock.patch(DEVICE, json={})
+    with pytest.raises(TransportError, match="did not acknowledge"):
+        await _client(hass).start_cook(DSN, **START)
+
+
+# ------------------------------------------- R-01: telemetry only confirms what it shows
+
+
+async def test_a_phase_change_does_not_acknowledge_an_unapplied_duration(
+    hass, aioclient_mock, sleep
+):
+    # Preheat ends on its own; the requested 20 min never reached the grill.
+    before = _cooking_device(mode="roast", state="preheat", left=600, total=600)
+    after = _cooking_device(mode="roast", state="cooking", left=600, total=600)
+    _listing_sequence(aioclient_mock, [before, before, after])
+    _replies(aioclient_mock, DEVICE, "get", [_shadow({"id": 1000})])
+    aioclient_mock.patch(DEVICE, json={})
+    with pytest.raises(TransportError, match="did not acknowledge"):
+        await _client(hass).start_cook(DSN, mode="roast", seconds=1200, temp=180)
+    assert [p["id"] for p in _patches(aioclient_mock)] == [1001, 1000]
+
+
+async def test_an_applied_duration_still_acknowledges(hass, aioclient_mock, sleep):
+    before = _cooking_device(mode="roast", state="preheat", left=600, total=600)
+    after = _cooking_device(mode="roast", state="cooking", left=1200, total=1200)
+    _listing_sequence(aioclient_mock, [before, before, after])
+    _replies(aioclient_mock, DEVICE, "get", [_shadow({"id": 1000})])
+    aioclient_mock.patch(DEVICE, json={})
+    await _client(hass).start_cook(DSN, mode="roast", seconds=1200, temp=180)
+    assert [p and p["id"] for p in _patches(aioclient_mock)] == [1001, None]
+
+
+async def test_a_probe_target_is_not_confirmed_by_telemetry(hass, aioclient_mock, sleep):
+    # Telemetry never shows the probe target, so a phase change proves nothing.
+    before = _cooking_device(mode="roast", state="preheat")
+    after = _cooking_device(mode="roast", state="cooking")
+    _listing_sequence(aioclient_mock, [before, before, after])
+    _replies(aioclient_mock, DEVICE, "get", [_shadow({"id": 1000})])
+    aioclient_mock.patch(DEVICE, json={})
+    with pytest.raises(TransportError, match="did not acknowledge"):
+        await _client(hass).start_cook(
+            DSN, mode="roast", seconds=600, temp=180,
+            probe_0={"mode": "manual", "setpoint": 75},
+        )
+
+
+async def test_a_probe_command_is_acknowledged_by_the_echo(hass, backend, sleep):
+    await _client(hass).start_cook(
+        DSN, **START, probe_0={"mode": "manual", "setpoint": 75}
+    )
+    assert [p and p["id"] for p in _patches(backend)] == [1001, None]
+
+
+async def test_a_grill_heat_level_is_not_confirmed_by_telemetry(hass, aioclient_mock, sleep):
+    # Grill mode sends a heat level; the °C the grill reports can't confirm it.
+    before = _cooking_device(mode="grill", setpoint=230, state="preheat")
+    after = _cooking_device(mode="grill", setpoint=230, state="cooking")
+    _listing_sequence(aioclient_mock, [before, before, after])
+    _replies(aioclient_mock, DEVICE, "get", [_shadow({"id": 1000})])
+    aioclient_mock.patch(DEVICE, json={})
+    with pytest.raises(TransportError, match="did not acknowledge"):
+        await _client(hass).start_cook(DSN, mode="grill", seconds=600, temp=2)
+
+
+async def test_a_skipped_preheat_is_not_confirmed_by_telemetry(hass, aioclient_mock, sleep):
+    before = _cooking_device(mode="roast", state="preheat")
+    after = _cooking_device(mode="roast", state="cooking")
+    _listing_sequence(aioclient_mock, [before, before, after])
+    _replies(aioclient_mock, DEVICE, "get", [_shadow({"id": 1000})])
+    aioclient_mock.patch(DEVICE, json={})
+    with pytest.raises(TransportError, match="did not acknowledge"):
+        await _client(hass).start_cook(
+            DSN, mode="roast", seconds=600, temp=180, skip_preheat=True
+        )
+
+
+# ------------------------------------------------- V-06: the withdrawal owns its cleanup
+
+
+def _holding_withdrawal(aioclient_mock, release, events):
+    """Patch handler that blocks the withdrawal (id 1000) until released."""
+
+    async def patched(method, url, data):
+        command = data["shadow"]["properties"]["desired"]["Cook_Command"]
+        if command and command.get("id") == 1000:
+            events.append("withdraw_started")
+            await release.wait()
+            events.append("withdraw_finished")
+        return AiohttpClientMockResponse(method, url, json={})
+
+    aioclient_mock.patch(DEVICE, side_effect=patched)
+
+
+async def test_a_second_cancellation_still_waits_for_the_withdrawal(
+    hass, aioclient_mock, sleep
+):
+    _listing_sequence(aioclient_mock, [_device()])
+    _replies(aioclient_mock, DEVICE, "get", [_shadow({"id": 1000})])
+    release, events = asyncio.Event(), []
+    _holding_withdrawal(aioclient_mock, release, events)
+    client = _client(hass)
+    waiting = asyncio.Event()
+
+    async def never_acknowledges(*args, **kwargs):
+        waiting.set()
+        await asyncio.Event().wait()
+
+    client._acknowledged = never_acknowledges
+    task = asyncio.create_task(client.start_cook(DSN, **START))
+    await waiting.wait()
+
+    task.cancel()
+    while "withdraw_started" not in events:
+        await asyncio.sleep(0)
+    task.cancel()                              # a second Stop press, mid-withdrawal
+    for _ in range(10):
+        await asyncio.sleep(0)
+    assert not task.done()                     # the transaction is not over yet
+
+    release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert events == ["withdraw_started", "withdraw_finished"]
+    assert [p["id"] for p in _patches(aioclient_mock)] == [1001, 1000]
+
+
+async def test_a_failing_withdrawal_after_cancellation_is_logged(
+    hass, aioclient_mock, sleep, caplog
+):
+    _listing_sequence(aioclient_mock, [_device()])
+    _replies(aioclient_mock, DEVICE, "get", [_shadow({"id": 1000})])
+    _replies(aioclient_mock, DEVICE, "patch", [{}, 500])
+    client = _client(hass)
+    sleep.side_effect = asyncio.CancelledError
+    with pytest.raises(asyncio.CancelledError):
+        await client.start_cook(DSN, **START)
+    assert "withdraw" in caplog.text.casefold()
