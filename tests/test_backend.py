@@ -1374,6 +1374,22 @@ async def test_a_probe_target_reached_shows_in_the_probe_state(hass, entry):
 
 
 @pytest.mark.asyncio
+async def test_cookstate_pause_shows_as_get_food_without_waiting_for_a_prompt(hass, entry):
+    # Live-validated 2026-11-06: CookStatePause (beacon_phase == "get_food",
+    # see ble_beacon.py) fired a couple seconds before the @98 prompt field,
+    # which this grill mode never actually set at all - without this, a
+    # probe-driven cook never got a "remove the food" cue once it finished.
+    import time as _time
+
+    c = await _beacon_coordinator(hass, entry)
+    c._cook_seen = True
+    c.beacon_phase = "get_food"
+    c._beacon_at = _time.monotonic()
+    c._merge_beacon(c.data)
+    assert c.data.grill.state == "get_food"
+
+
+@pytest.mark.asyncio
 async def test_a_frame_without_mfg2_keeps_the_last_known_probe_state(hass, entry):
     from .test_ble_beacon import _frame, _frame43
 

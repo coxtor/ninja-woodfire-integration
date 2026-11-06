@@ -485,6 +485,14 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
             state.grill.state = "idle"
         elif prompt_state is not None:
             state.grill.state = prompt_state
+        elif self.beacon_phase == "get_food":
+            # CookStatePause (the firmware's own GCCookState), live-validated
+            # 2026-11-06: fires when a probe reaches its target, a couple of
+            # seconds before (and this grill mode never actually sent) the
+            # @98 "get food" prompt this card otherwise relies on - without
+            # this, a probe-driven cook never got a "remove the food" cue at
+            # all once it finished.
+            state.grill.state = "get_food"
         elif self.beacon_phase == "cooking":
             state.grill.state = "cooking"
         elif self.beacon_phase in ("preheat", "ignition"):

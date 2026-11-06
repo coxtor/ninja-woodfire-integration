@@ -89,7 +89,17 @@ _UIM_POWERING_OFF = 9
 
 # Mapped against a full cook captured over the air (phase/prompt confirmed
 # against the grill display): preheat->add food->cooking->flip->done->get food.
-_PHASE_MAP = {2: "ignition", 3: "preheat", 4: "cooking", 8: "lid_open"}  # 0 == idle/done; off == no beacon
+_PHASE_MAP = {2: "ignition", 3: "preheat", 4: "cooking", 5: "get_food", 8: "lid_open"}  # 0 == idle/done; off == no beacon
+# 5 (live-validated 2026-11-06, bit-exact against the app's own decrypted
+# log, 3 frames): this field is the firmware's own GCCookState enum - the
+# names line up almost one-to-one with what was already mapped empirically
+# (Infusion~ignition, Preheat, Heat~cooking, LidOpen). Raw 5 = CookStatePause,
+# observed exactly when a probe reaches its target, ~2 s before the
+# "get food" prompt (@98) actually appears - which it never did in these
+# frames (prompt stayed None throughout the whole probe cook, the only
+# "please remove the food" signal this grill mode ever sent in the beacon).
+# Mapped straight to the existing "get_food" state rather than inventing a
+# new one, since the card already shows "please remove food" for that case.
 # 8 (live-validated 2026-11-06): the lid was opened during a wood-fire cook
 # (firmware's own CookStateLidOpen). Re-closing it re-runs ignition (phase
 # goes back to 2) rather than resuming straight into cooking - the grill

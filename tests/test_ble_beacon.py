@@ -255,3 +255,14 @@ def test_phase_8_is_lid_open_during_a_wood_fire_cook():
     plain = _pack([(8, 8, 13), (25, 5, 8)])
     s = _p(_encrypt_segment(plain))
     assert s["phase"] == "lid_open"
+
+
+def test_phase_5_is_get_food_when_a_probe_target_is_reached():
+    # Bit-exact live-validated 2026-11-06, 3 frames: this field is the
+    # firmware's own GCCookState enum (names line up with the already-mapped
+    # values - Infusion/Preheat/Heat/LidOpen). Raw 5 = CookStatePause, fired
+    # right as the probe hit its target, a couple seconds before (and this
+    # grill mode never actually sent) the @98 prompt field.
+    plain = _pack([(8, 8, 13), (25, 5, 5)])
+    s = _p(_encrypt_segment(plain))
+    assert s["phase"] == "get_food"
