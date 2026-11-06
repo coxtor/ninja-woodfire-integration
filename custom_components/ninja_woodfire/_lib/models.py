@@ -235,7 +235,7 @@ class ProbeInfo:
     temp: float = 0.0              # current measured temp in °C
     progress: int = 0              # 0-100 progress towards setpoint
     target: ProbeMode = field(default_factory=ProbeMode)
-    state: str = "none"            # cooking | done | none | get_food | flip_food | …
+    state: str = "none"            # cooking | done | resting | none | get_food | flip_food | …
 
     @classmethod
     def from_dict(cls, d: Any) -> "ProbeInfo":

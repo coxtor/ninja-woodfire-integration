@@ -52,11 +52,12 @@ _TOTAL = (104, 16)     # the cook's set duration in seconds (== remaining during
 # ProbeState.state within each probe's detailed record in mfg2 (only present
 # when the scan response was captured alongside the main advertisement - see
 # mfg1_from_advertisement). Bit-exact live-validated 2026-11-06 against the
-# app's own GrillCombinedState log, two sessions: 0/1/2 = PcsPOR/PcsStart/
-# PcsCooking (3 transitions), then 3/4 = PcsDoneAfterCook/PcsGetFood (probe
-# hit its target, raw advertisement + app log correlated at the same
-# millisecond). Mapped to the same vocabulary ProbeInfo.state already uses
-# for the cloud backends (models.py).
+# app's own GrillCombinedState log, three sessions: 0/1/2 = PcsPOR/PcsStart/
+# PcsCooking (3 transitions), 3/4 = PcsDoneAfterCook/PcsGetFood (probe hit its
+# target), 5 = PcsResting (the app's own post-target rest timer; its
+# ProbeState.seconds field - idx44 here - also matched the app's rest-timer
+# seconds exactly). Mapped to the same vocabulary ProbeInfo.state already
+# uses for the cloud backends (models.py), with "resting" added to it.
 _PROBE0_STATE = (224, 4)
 _PROBE1_STATE = (272, 4)
 _PROBE_STATE_MAP = {
@@ -65,6 +66,7 @@ _PROBE_STATE_MAP = {
     2: "cooking",    # PcsCooking
     3: "done",       # PcsDoneAfterCook
     4: "get_food",   # PcsGetFood
+    5: "resting",    # PcsResting - the app's own post-target rest timer is running
 }
 
 # The firmware's own UI state machine ("Uim"). The grill keeps advertising

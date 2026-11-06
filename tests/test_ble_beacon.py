@@ -198,6 +198,11 @@ def test_probe_get_food_is_decoded():
     assert s["probe1_state"] == "get_food"
 
 
+def test_probe_resting_is_decoded():
+    s = _p(_frame43(probe1_state=5))
+    assert s["probe1_state"] == "resting"
+
+
 def test_both_probes_decoded_independently():
     s = _p(_frame43(probe0_state=2, probe1_state=3))
     assert s["probe0_state"] == "cooking"
