@@ -170,12 +170,15 @@ def test_existing_fields_unchanged_by_timer_decode():
 # decrypted GrillCombinedState log correlated at the same millisecond, twice
 # (0xC/0xD1 -> 1/4/0x6/0x7/0x8/... PcsDoneAfterCook, then PcsGetFood).
 
-def _frame43(probe0_state=0, probe1_state=0, **mfg1_extra):
+def _frame43(probe0_state=0, probe1_state=0, probe0_resting_s=0, probe1_resting_s=0, **mfg1_extra):
     """A combined mfg1||mfg2 frame: two independently CTS-encrypted segments."""
     fields = [(8, 8, 13)] + [(o, w, v) for o, (w, v) in mfg1_extra.items()]
     plain43 = bytearray(_pack(fields, length=43))
-    for off, val in ((224, probe0_state), (272, probe1_state)):
-        for i in range(4):
+    for off, width, val in (
+        (224, 4, probe0_state), (272, 4, probe1_state),
+        (247, 17, probe0_resting_s), (295, 17, probe1_resting_s),
+    ):
+        for i in range(width):
             if (val >> i) & 1:
                 plain43[(off + i) >> 3] |= 1 << ((off + i) & 7)
     plain43 = bytes(plain43)
@@ -212,6 +215,29 @@ def test_both_probes_decoded_independently():
 def test_probe_por_and_start_both_read_as_none():
     assert _p(_frame43(probe0_state=0))["probe0_state"] == "none"
     assert _p(_frame43(probe0_state=1))["probe0_state"] == "none"
+
+
+# --- ProbeState.seconds during PcsResting (@247/@295 w17, counts UP) -------
+# Bit-exact live-validated 2026-11-06 against the app's own GrillCombinedState
+# log at four independent values (20/70/160/299), correcting an earlier wrong
+# guess (a 10-bit field one step earlier in the same record).
+
+def test_resting_seconds_is_decoded_while_resting():
+    s = _p(_frame43(probe1_state=5, probe1_resting_s=160))
+    assert s["probe1_resting_s"] == 160
+
+
+def test_resting_seconds_is_none_outside_resting():
+    # The field exists in every frame's bit layout, but only means something
+    # in PcsResting - treat it as noise/reused bits otherwise.
+    s = _p(_frame43(probe1_state=2, probe1_resting_s=160))
+    assert s["probe1_resting_s"] is None
+
+
+def test_resting_seconds_decoded_independently_per_probe():
+    s = _p(_frame43(probe0_state=5, probe0_resting_s=20, probe1_state=5, probe1_resting_s=299))
+    assert s["probe0_resting_s"] == 20
+    assert s["probe1_resting_s"] == 299
 
 
 # --- Uim power state (live-captured layout: @16 w5)

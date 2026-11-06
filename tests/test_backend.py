@@ -1409,6 +1409,85 @@ async def test_a_disabled_probes_progress_stays_zero(hass, entry):
     assert c.data.probes.probes[0].progress == 0
 
 
+# --- the Rest window: the one post-target sub-state with a real timer ------
+# Bit-exact live-validated 2026-11-06: ProbeState.seconds counts UP during
+# PcsResting; two independent full-length episodes both hit exactly 299
+# before flipping to PcsDone, confirming a fixed 300 s (5 min) window - the
+# grill's own physical display shows a real countdown here (the app's UI
+# never surfaces it, just "remove food").
+
+@pytest.mark.asyncio
+async def test_resting_progress_tracks_the_rest_window_not_temp_vs_target(hass, entry):
+    import time as _time
+    from .test_ble_beacon import _frame43
+
+    c = await _beacon_coordinator(hass, entry)
+    c.cook_setting_probe_enabled[1] = True
+    c._beacon_at = _time.monotonic()
+    c.update_beacon(_frame43(probe1_state=5, probe1_resting_s=160))
+    assert c.data.probes.probes[1].progress == 53  # round(100 * 160 / 300)
+
+
+@pytest.mark.asyncio
+async def test_resting_gives_a_real_countdown_unlike_the_rest_of_a_probe_cook(hass, entry):
+    import time as _time
+    from .test_ble_beacon import _frame43
+
+    c = await _beacon_coordinator(hass, entry)
+    c.cook_setting_probe_enabled[1] = True
+    c._beacon_at = _time.monotonic()
+    c.update_beacon(_frame43(probe1_state=5, probe1_resting_s=160))
+    g = c.data.grill
+    assert (g.seconds_set, g.seconds_left, g.timer_estimated) == (300, 140, False)
+
+
+@pytest.mark.asyncio
+async def test_resting_countdown_reaches_zero_at_the_full_window(hass, entry):
+    import time as _time
+    from .test_ble_beacon import _frame43
+
+    c = await _beacon_coordinator(hass, entry)
+    c.cook_setting_probe_enabled[1] = True
+    c._beacon_at = _time.monotonic()
+    c.update_beacon(_frame43(probe1_state=5, probe1_resting_s=299))
+    assert c.data.grill.seconds_left == 1
+    assert c.data.probes.probes[1].progress == 100
+
+
+@pytest.mark.asyncio
+async def test_resting_timer_overrides_the_usual_timerless_probe_cook_blanking(hass, entry):
+    # probe_driving is still true throughout resting (the probe stays
+    # enabled) - without the override this would otherwise fall into the
+    # ordinary "a probe cook never has a timer" branch and blank it.
+    import time as _time
+    from .test_ble_beacon import _frame43
+
+    c = await _beacon_coordinator(hass, entry)
+    c.cook_setting_probe_enabled[1] = True
+    assert any(c.cook_setting_probe_enabled)
+    c._beacon_at = _time.monotonic()
+    c.update_beacon(_frame43(probe1_state=5, probe1_resting_s=50))
+    assert c.data.grill.seconds_left is not None
+
+
+@pytest.mark.asyncio
+async def test_resting_seconds_does_not_leak_into_the_next_cook(hass, entry):
+    # Bug this guards against: a stale resting_s sticking around (like
+    # beacon_probe_states is deliberately sticky for) would make a brand
+    # new cook briefly show a leftover countdown from the previous one.
+    import time as _time
+    from .test_ble_beacon import _frame43
+
+    c = await _beacon_coordinator(hass, entry)
+    c.cook_setting_probe_enabled[1] = True
+    c._beacon_at = _time.monotonic()
+    c.update_beacon(_frame43(probe1_state=5, probe1_resting_s=200))
+    assert c.beacon_probe_resting_s[1] == 200
+
+    c.update_beacon(_frame43(probe1_state=2))  # new cook, back to PcsCooking
+    assert c.beacon_probe_resting_s[1] is None
+
+
 @pytest.mark.asyncio
 async def test_cookstate_pause_shows_as_get_food_without_waiting_for_a_prompt(hass, entry):
     # Live-validated 2026-11-06: CookStatePause (beacon_phase == "get_food",

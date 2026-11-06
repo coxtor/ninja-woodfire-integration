@@ -54,10 +54,9 @@ _TOTAL = (104, 16)     # the cook's set duration in seconds (== remaining during
 # mfg1_from_advertisement). Bit-exact live-validated 2026-11-06 against the
 # app's own GrillCombinedState log, three sessions: 0/1/2 = PcsPOR/PcsStart/
 # PcsCooking (3 transitions), 3/4 = PcsDoneAfterCook/PcsGetFood (probe hit its
-# target), 5 = PcsResting (the app's own post-target rest timer; its
-# ProbeState.seconds field - idx44 here - also matched the app's rest-timer
-# seconds exactly). Mapped to the same vocabulary ProbeInfo.state already
-# uses for the cloud backends (models.py), with "resting" added to it.
+# target), 5 = PcsResting (the app's own post-target rest timer). Mapped to
+# the same vocabulary ProbeInfo.state already uses for the cloud backends
+# (models.py), with "resting" added to it.
 _PROBE0_STATE = (224, 4)
 _PROBE1_STATE = (272, 4)
 _PROBE_STATE_MAP = {
@@ -68,6 +67,20 @@ _PROBE_STATE_MAP = {
     4: "get_food",   # PcsGetFood
     5: "resting",    # PcsResting - the app's own post-target rest timer is running
 }
+
+# ProbeState.seconds: elapsed seconds since the probe entered PcsResting,
+# counting UP from 0 (not a countdown). Bit-exact live-validated 2026-11-06
+# against the app's own log at four independent values (20/70/160/299) - a
+# correction over an earlier, wrong guess at this field's location (a
+# 10-bit field one step earlier in the same record, which does not match).
+# Two independent full-length rest episodes both hit exactly 299 before the
+# probe flipped to PcsDone the next second, confirming a fixed 300 s (5 min)
+# rest window - see _REST_TOTAL_SECONDS in coordinator.py, which also uses
+# this to drive a real countdown during "resting" (the only post-target
+# sub-state the firmware actually times), matching the grill's own physical
+# display, which shows a "Rest" timer here the app's own UI never surfaces.
+_PROBE0_RESTING_SECONDS = (247, 17)
+_PROBE1_RESTING_SECONDS = (295, 17)
 
 # The firmware's own UI state machine ("Uim"). The grill keeps advertising
 # this beacon even with its display fully off (UimPowerOff) - it only stops
@@ -245,12 +258,19 @@ def parse_beacon(mfg: bytes | None, key: bytes, iv: bytes) -> dict | None:
     plain = _decrypt_segment(bytes(mfg[:_MFG1_LEN]), key, iv)
     remaining, total = _timer(plain)
     probe0_state = probe1_state = None
+    probe0_resting_s = probe1_resting_s = None
     if len(mfg) >= _MFG1_LEN + _MFG2_LEN:
         # mfg2 is a second, independent CTS segment - decrypted separately,
         # not just more bytes of mfg1's.
         plain += _decrypt_segment(bytes(mfg[_MFG1_LEN : _MFG1_LEN + _MFG2_LEN]), key, iv)
         probe0_state = _PROBE_STATE_MAP.get(_bitread(plain, *_PROBE0_STATE))
         probe1_state = _PROBE_STATE_MAP.get(_bitread(plain, *_PROBE1_STATE))
+        # Only meaningful while PcsResting - the firmware reuses these bits
+        # for something else (or leaves them at 0) in every other ProbeState.
+        if probe0_state == "resting":
+            probe0_resting_s = _bitread(plain, *_PROBE0_RESTING_SECONDS)
+        if probe1_state == "resting":
+            probe1_resting_s = _bitread(plain, *_PROBE1_RESTING_SECONDS)
     return {
         "probe0_temp": _probe_c(_bitread(plain, *_PROBE0)),
         "probe1_temp": _probe_c(_bitread(plain, *_PROBE1)),
@@ -269,4 +289,6 @@ def parse_beacon(mfg: bytes | None, key: bytes, iv: bytes) -> dict | None:
         "uim_idle": _bitread(plain, *_UIM) == _UIM_IDLE,
         "probe0_state": probe0_state,
         "probe1_state": probe1_state,
+        "probe0_resting_s": probe0_resting_s,
+        "probe1_resting_s": probe1_resting_s,
     }

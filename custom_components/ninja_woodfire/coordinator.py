@@ -84,6 +84,13 @@ _PREHEAT_SKIP_UNDER_S = 30
 # No beacon AND no successful connect for this long -> the grill is off / out of
 # range. Shorter outages keep the last state (smooths transient radio glitches).
 _OFFLINE_AFTER_S = 60
+# The firmware's own post-target "Rest" window: a fixed 300 s (5 min) hold
+# shown with a real countdown on the grill's own physical display (the app's
+# UI never surfaces it, just "remove food"). Live-confirmed 2026-11-06: two
+# independent full-length episodes both reached ProbeState.seconds == 299 the
+# instant before flipping to PcsDone. This is the one post-target sub-state
+# that genuinely has a timer, unlike the rest of a probe-driven cook.
+_REST_TOTAL_SECONDS = 300
 # Beacon display-prompt -> the grill's current cook step. Takes priority over the
 # coarse phase so the card/state reflect what the grill display actually shows.
 _PROMPT_STATE = {
@@ -215,6 +222,10 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
         # into the local state.
         self.beacon_probes: list[float | None] = [None, None]
         self.beacon_probe_states: list[str | None] = [None, None]
+        # Elapsed seconds since a probe entered PcsResting (counts up, see
+        # _REST_TOTAL_SECONDS) - only meaningful while that probe's own state
+        # is "resting"; None otherwise, like beacon_probe_states.
+        self.beacon_probe_resting_s: list[int | None] = [None, None]
         self.beacon_lid: bool | None = None
         self.beacon_phase: str | None = None
         self.beacon_prompt: str | None = None
@@ -394,10 +405,21 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
         # under passive scanning - see BluetoothScanningMode.PASSIVE in
         # __init__.py). Keep the last known state rather than blank it out
         # on a frame that simply didn't carry it.
-        if parsed.get("probe0_state") is not None:
-            self.beacon_probe_states[0] = parsed["probe0_state"]
-        if parsed.get("probe1_state") is not None:
-            self.beacon_probe_states[1] = parsed["probe1_state"]
+        for idx in (0, 1):
+            new_state = parsed.get(f"probe{idx}_state")
+            if new_state is None:
+                continue
+            self.beacon_probe_states[idx] = new_state
+            # A fresh, non-"resting" state means a new episode (or none at
+            # all) - clear any leftover seconds so a later resting spell
+            # doesn't briefly show the previous one's elapsed time before
+            # its own first mfg2 frame arrives.
+            if new_state != "resting":
+                self.beacon_probe_resting_s[idx] = None
+        if parsed.get("probe0_resting_s") is not None:
+            self.beacon_probe_resting_s[0] = parsed["probe0_resting_s"]
+        if parsed.get("probe1_resting_s") is not None:
+            self.beacon_probe_resting_s[1] = parsed["probe1_resting_s"]
         self.beacon_lid = parsed["lid_open"]
         self.beacon_phase = parsed["phase"]
         self.beacon_prompt = parsed["prompt"]
@@ -408,10 +430,10 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
         if _LOGGER.isEnabledFor(logging.DEBUG):
             _LOGGER.debug(
                 "Beacon decoded: mfg_len=%d phase=%r lid=%r prompt=%r probes=%r timer=%r/%r "
-                "probe_states=%r",
+                "probe_states=%r resting_s=%r",
                 len(mfg) if mfg else 0, parsed["phase"], parsed["lid_open"], parsed["prompt"],
                 self.beacon_probes, self.beacon_remaining, self.beacon_total,
-                self.beacon_probe_states,
+                self.beacon_probe_states, self.beacon_probe_resting_s,
             )
         self._beacon_at = time.monotonic()
         self._last_contact_m = self._beacon_at   # a beacon means the grill is reachable
@@ -661,7 +683,25 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
         # rest of this idle/get_food/resting stretch. _probe_drove_this_cook
         # persists until the cook actually ends (below), so it doesn't.
         timerless_probe_cook = probe_driving or self._probe_drove_this_cook
-        if timerless_probe_cook:
+        # The one exception to "a probe cook never has a timer": the fixed
+        # 300 s post-target Rest window genuinely does (see
+        # _REST_TOTAL_SECONDS) - the grill's own physical display shows a
+        # real countdown there, which the app's UI never surfaces. Takes
+        # priority over the timerless blanking below.
+        resting_idx = next(
+            (idx for idx in (0, 1)
+             if self.beacon_probe_states[idx] == "resting"
+             and self.beacon_probe_resting_s[idx] is not None),
+            None,
+        )
+        if resting_idx is not None:
+            left = max(0, _REST_TOTAL_SECONDS - self.beacon_probe_resting_s[resting_idx])
+            grill.seconds_set = _REST_TOTAL_SECONDS
+            grill.seconds_left = left
+            grill.end_time_utc = int(dt_util.utcnow().timestamp()) + left
+            grill.timer_estimated = False
+            self._local_cook_end = None
+        elif timerless_probe_cook:
             # Live-observed 2026-11-06: the beacon's "remaining" field isn't
             # just absent for a probe-driven cook, it can hold a static
             # value that looks exactly like a valid countdown (passes every
@@ -720,12 +760,18 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
             # (2026-11-06): the app's ProbeStatus.progress tracked
             # round(100 * temp / target) almost exactly (e.g. 30/42 -> 71-72,
             # 40/42 -> 95). The BLE beacon has no separate progress field to
-            # read, so this is computed locally instead of left at 0.
-            progress = (
-                max(0, min(100, round(100 * (temp or 0.0) / target)))
-                if target and plugged and enabled
-                else 0
-            )
+            # read, so this is computed locally instead of left at 0. Once
+            # resting, temp/target is no longer meaningful (temp is already
+            # at/above target) - the app's own progress field switches
+            # meaning there too, to percent of the Rest window elapsed.
+            if self.beacon_probe_states[idx] == "resting" and self.beacon_probe_resting_s[idx] is not None:
+                progress = max(0, min(100, round(
+                    100 * self.beacon_probe_resting_s[idx] / _REST_TOTAL_SECONDS
+                )))
+            elif target and plugged and enabled:
+                progress = max(0, min(100, round(100 * (temp or 0.0) / target)))
+            else:
+                progress = 0
             probes.append(ProbeInfo(
                 name=f"probe{idx}",
                 plugged_in=plugged,
@@ -878,6 +924,30 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
             self._probe_halfway_fired[idx] = reached
             self._probe_target_fired[idx] = reached
 
+    @staticmethod
+    def _status_snapshot(state: CombinedState) -> dict[str, Any]:
+        """A consistent status snapshot attached to every lifecycle event.
+
+        Lets a notification (e.g. Node-RED) show the full picture - grill
+        temp/state/phase, cook timer, both probes - without the receiving
+        side having to separately poll entities for it.
+        """
+        grill = state.grill
+        probes = state.probes.probes
+        probe0 = probes[0] if len(probes) > 0 else None
+        probe1 = probes[1] if len(probes) > 1 else None
+        return {
+            "grill_state": grill.state,
+            "phase": state.cook.state,
+            "grill_temp": grill.temps.grill,
+            "seconds_left": grill.seconds_left,
+            "seconds_set": grill.seconds_set,
+            "probe0_temp": probe0.temp if probe0 else None,
+            "probe0_target": probe0.target.setpoint if probe0 else None,
+            "probe1_temp": probe1.temp if probe1 else None,
+            "probe1_target": probe1.target.setpoint if probe1 else None,
+        }
+
     def _emit_lifecycle_events(self, state: CombinedState) -> None:
         """Fire HA events on cook-lifecycle transitions (one per poll)."""
         g, c = state.grill.state, state.cook.state
@@ -892,7 +962,10 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
 
         fire = self.hass.bus.async_fire
         grill = state.grill
-        common = {"dsn": self.dsn, "mode": grill.mode, "setpoint": grill.setpoint}
+        common = {
+            "dsn": self.dsn, "mode": grill.mode, "setpoint": grill.setpoint,
+            **self._status_snapshot(state),
+        }
         active = g in ACTIVE_STATES
 
         if active and (prev not in ACTIVE_STATES or self._new_cook):
@@ -957,7 +1030,10 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
                 self._probe_halfway_fired[idx] = False
                 self._probe_target_fired[idx] = False
             start = self._probe_start_temp[idx]
-            base = {"dsn": self.dsn, "probe_index": idx, "target": target, "current": probe.temp}
+            base = {
+                "dsn": self.dsn, "probe_index": idx, "target": target, "current": probe.temp,
+                **self._status_snapshot(state),
+            }
             halfway = start + (target - start) / 2
             if not self._probe_halfway_fired[idx] and start < target and probe.temp >= halfway:
                 self._probe_halfway_fired[idx] = True
@@ -980,6 +1056,7 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
                 fire(EVENT_PROBE_ALARM, {
                     "dsn": self.dsn, "probe_index": idx,
                     "threshold": threshold, "current": probe.temp,
+                    **self._status_snapshot(state),
                 })
             elif probe.temp < threshold:
                 self._probe_alarm_fired[idx] = False  # re-arm once it drops back below
