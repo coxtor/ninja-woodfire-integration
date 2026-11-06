@@ -1373,17 +1373,37 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
         )
 
     async def async_set_probe(
-        self, idx: int, *, enabled: bool | None = None, setpoint: int | None = None
+        self,
+        idx: int,
+        *,
+        enabled: bool | None = None,
+        setpoint: int | None = None,
+        _from_preset: bool = False,
     ) -> None:
-        """Change a probe target; applied live while a cook is running."""
+        """Change a probe target; applied live while a cook is running.
+
+        A setpoint set this way (hand-typed, or the toggle turning off) no
+        longer matches any preset's current doneness level, so the food
+        select is reset to "Manual" - `_from_preset` is how the preset
+        methods below exempt their own setpoint write from that reset.
+        Turning the toggle off also resets it, so the select shows "no
+        preset" rather than a stale one for a target that is no longer live.
+        """
         async with self._exclusive():
             live = self.data
             active = self.is_cook_active
+            # Captured before the active-cook backfill below, which would
+            # otherwise make a same-value re-issue (e.g. the toggle turning
+            # back on) look like a hand-typed setpoint change.
+            explicit_setpoint = setpoint is not None
             if active:
                 if enabled is None:
                     enabled = self.live_or_staged_probe_enabled(idx)
                 if setpoint is None:
                     setpoint = self.live_or_staged_probe_setpoint(idx)
+            if (explicit_setpoint and not _from_preset) or enabled is False:
+                self.cook_setting_probe_food[idx] = PROBE_FOOD_MANUAL
+                self.cook_setting_probe_doneness_index[idx] = 0
             if enabled is not None:
                 self.cook_setting_probe_enabled[idx] = enabled
             if setpoint is not None:
@@ -1407,8 +1427,9 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
         preset (see `ble_proto.py`), so this just resolves the preset's
         current doneness level to a plain °C target and sends it through the
         existing manual-setpoint path - same effect, no protocol change.
-        Selecting "Manual" only remembers the choice; it does not touch the
-        setpoint, so whatever was last sent (preset or hand-typed) stays.
+        Picking an actual food also turns the probe's target on, since a
+        preset is only meaningful once it is live; picking "Manual" only
+        remembers the choice and leaves enabled/setpoint untouched.
         """
         self.cook_setting_probe_food[idx] = food
         preset = get_food_preset(food)
@@ -1418,7 +1439,9 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
         level = preset.levels[min(
             self.cook_setting_probe_doneness_index[idx], len(preset.levels) - 1
         )]
-        await self.async_set_probe(idx, setpoint=level.temp_c)
+        await self.async_set_probe(
+            idx, enabled=True, setpoint=level.temp_c, _from_preset=True
+        )
 
     async def async_set_probe_doneness(self, idx: int, level_index: int) -> None:
         """Pick a doneness level within the probe's currently selected preset."""
@@ -1429,7 +1452,10 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
             return
         level_index = max(0, min(level_index, len(preset.levels) - 1))
         self.cook_setting_probe_doneness_index[idx] = level_index
-        await self.async_set_probe(idx, setpoint=preset.levels[level_index].temp_c)
+        await self.async_set_probe(
+            idx, enabled=True, setpoint=preset.levels[level_index].temp_c,
+            _from_preset=True,
+        )
 
     async def _reissue(
         self,

@@ -5,6 +5,7 @@ import pytest
 
 from homeassistant.exceptions import HomeAssistantError
 
+from custom_components.ninja_woodfire._lib.probe_presets import PROBE_FOOD_MANUAL
 from custom_components.ninja_woodfire.const import (
     EVENT_COOK_DONE,
     EVENT_COOK_HALFTIME,
@@ -165,6 +166,44 @@ async def test_doneness_index_past_the_presets_range_clamps(coordinator):
     await coordinator.async_set_probe_food(0, "Chicken")  # only 1 level
     await coordinator.async_set_probe_doneness(0, 5)
     assert sent(coordinator)["probe_0"] == {"mode": "manual", "setpoint": 74}
+
+
+async def test_selecting_a_food_preset_also_turns_the_probe_on(coordinator):
+    coordinator.data = mk_state(cooking(), probes={"probes": [probe(active=0, setpoint=60)]})
+    await coordinator.async_set_probe_food(0, "Beef")
+    assert coordinator.live_or_staged_probe_enabled(0) is True
+    assert sent(coordinator)["probe_0"]["setpoint"] == 42
+
+
+async def test_choosing_a_doneness_also_turns_the_probe_on(coordinator):
+    coordinator.data = mk_state(cooking(), probes={"probes": [probe(active=0, setpoint=60)]})
+    coordinator.cook_setting_probe_food[0] = "Beef"
+    await coordinator.async_set_probe_doneness(0, 1)
+    assert coordinator.live_or_staged_probe_enabled(0) is True
+
+
+async def test_hand_typing_a_setpoint_resets_the_food_select_to_manual(coordinator):
+    coordinator.data = mk_state(cooking(), probes={"probes": [probe(setpoint=60)]})
+    await coordinator.async_set_probe_food(0, "Beef")
+    await coordinator.async_set_probe(0, setpoint=70)  # as number.py calls it
+    assert coordinator.live_or_staged_probe_food(0) == PROBE_FOOD_MANUAL
+    assert coordinator.live_or_staged_probe_doneness_index(0) == 0
+
+
+async def test_turning_the_probe_off_resets_the_food_select_too(coordinator):
+    coordinator.data = mk_state(cooking(), probes={"probes": [probe(setpoint=42)]})
+    await coordinator.async_set_probe_food(0, "Beef")
+    await coordinator.async_set_probe(0, enabled=False)  # as the toggle calls it
+    assert coordinator.live_or_staged_probe_food(0) == PROBE_FOOD_MANUAL
+
+
+async def test_turning_the_probe_back_on_does_not_disturb_its_preset(coordinator):
+    # The toggle re-enabling a probe backfills its live setpoint internally
+    # (see async_set_probe); that must not look like a hand-typed change.
+    coordinator.data = mk_state(cooking(), probes={"probes": [probe(setpoint=42)]})
+    await coordinator.async_set_probe_food(0, "Beef")
+    await coordinator.async_set_probe(0, enabled=True)  # as the toggle calls it
+    assert coordinator.live_or_staged_probe_food(0) == "Beef"
 
 
 # ---------------------------------------------------------------- polling
