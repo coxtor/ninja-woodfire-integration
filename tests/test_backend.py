@@ -1522,6 +1522,47 @@ async def test_a_probe_cook_shows_no_timer_even_if_the_beacon_briefly_looked_lik
 
 
 @pytest.mark.asyncio
+async def test_a_probe_cook_ignores_a_beacon_remaining_that_looks_valid(hass, entry):
+    # Live-observed 2026-11-06: the beacon's "remaining" field held a static
+    # value (the preheat-era number) that passed every check in _timer() -
+    # phase, 0<remaining<=12h - for the entire rest of a probe-driven cook,
+    # never actually counting down. The earlier fix only stopped the
+    # fabricated *estimate*; this is the beacon itself reporting something
+    # that looks real but isn't, per the user's "probe = never a timer" rule.
+    import time as _time
+
+    c = await _beacon_coordinator(hass, entry)
+    c.cook_setting_probe_enabled[0] = True
+    c.beacon_phase = "cooking"
+    c.beacon_remaining, c.beacon_total = 600, None
+    c._beacon_at = _time.monotonic()
+    c._merge_beacon(c.data)
+    g = c.data.grill
+    assert (g.seconds_set, g.seconds_left, g.timer_estimated) == (None, None, False)
+
+
+@pytest.mark.asyncio
+async def test_a_probe_becoming_active_clears_a_timer_from_before(hass, entry):
+    # The probe is enabled mid-cook (e.g. via a preset select) while a
+    # genuine duration-based timer was already showing from before the
+    # probe took over - it must not keep displaying that stale value.
+    import time as _time
+
+    c = await _beacon_coordinator(hass, entry)
+    c.beacon_phase = "cooking"
+    c.beacon_remaining, c.beacon_total = 500, 600
+    c._beacon_at = _time.monotonic()
+    c._merge_beacon(c.data)
+    assert c.data.grill.seconds_left == 500
+
+    c.cook_setting_probe_enabled[0] = True
+    c.beacon_remaining = 499
+    c._merge_beacon(c.data)
+    g = c.data.grill
+    assert (g.seconds_set, g.seconds_left, g.timer_estimated) == (None, None, False)
+
+
+@pytest.mark.asyncio
 async def test_a_plain_duration_cook_without_any_probe_still_estimates(hass, entry):
     import time as _time
 

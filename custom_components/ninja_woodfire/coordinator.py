@@ -532,7 +532,19 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
         # itself builds further down - too late to consult here.
         probe_driving = any(self.cook_setting_probe_enabled[: len(self.beacon_probes)])
         timerless_probe_cook = probe_driving
-        if self.beacon_remaining is not None and not in_stop_grace:
+        if timerless_probe_cook:
+            # Live-observed 2026-11-06: the beacon's "remaining" field isn't
+            # just absent for a probe-driven cook, it can hold a static
+            # value that looks exactly like a valid countdown (passes every
+            # check in _timer()) while never actually counting down - stuck
+            # at the preheat-era number for the rest of the cook. Trusting
+            # it here was the bug; per the user, a probe cook has no timer,
+            # full stop, so this is never even considered.
+            self._local_cook_end = None
+            if grill.timer_estimated or grill.seconds_left is not None:
+                grill.seconds_set = grill.seconds_left = grill.end_time_utc = None
+                grill.timer_estimated = False
+        elif self.beacon_remaining is not None and not in_stop_grace:
             # Without a usable total (a meat probe active) keep the staged
             # duration, but never one shorter than what is still to come.
             grill.seconds_set = self.beacon_total or max(
@@ -544,7 +556,7 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
             )
             grill.timer_estimated = False
             self._local_cook_end = None
-        elif grill.state == "cooking" and not timerless_probe_cook and not (
+        elif grill.state == "cooking" and not (
             bool(grill.seconds_set) and not grill.timer_estimated
         ):
             # Start the countdown only once the lid is closed after loading — the
