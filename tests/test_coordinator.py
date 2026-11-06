@@ -147,6 +147,21 @@ async def test_changing_doneness_resends_the_new_level_temp(coordinator):
     assert sent(coordinator)["probe_0"] == {"mode": "manual", "setpoint": 47}
 
 
+async def test_switching_food_resets_the_doneness_index_to_the_first_level(coordinator):
+    # Bug reported live: picking a new food preset without also touching
+    # doneness left the previous food's doneness index in place (e.g. index 2
+    # carried over to a food where that means something else, or the
+    # doneness select visually looked "stuck"). A new food should default to
+    # its own first level, not whatever was last picked for a different one.
+    coordinator.data = mk_state(cooking(), probes={"probes": [probe(setpoint=60)]})
+    await coordinator.async_set_probe_food(0, "Beef")
+    await coordinator.async_set_probe_doneness(0, 2)  # "M. Rare 3"
+    assert coordinator.live_or_staged_probe_doneness_index(0) == 2
+
+    await coordinator.async_set_probe_food(0, "Lamb")
+    assert coordinator.live_or_staged_probe_doneness_index(0) == 0
+
+
 async def test_manual_food_does_not_touch_the_setpoint(coordinator):
     coordinator.data = mk_state(cooking(), probes={"probes": [probe(setpoint=60)]})
     await coordinator.async_set_probe_food(0, "Manual")

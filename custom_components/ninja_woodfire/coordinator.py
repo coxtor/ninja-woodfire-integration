@@ -1625,9 +1625,11 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
         if preset is None:
             self.async_update_listeners()
             return
-        level = preset.levels[min(
-            self.cook_setting_probe_doneness_index[idx], len(preset.levels) - 1
-        )]
+        # A new food has no relation to whatever doneness level was picked
+        # for the previous one - start at the first level rather than
+        # carrying over an index that may not even mean the same thing.
+        self.cook_setting_probe_doneness_index[idx] = 0
+        level = preset.levels[0]
         await self.async_set_probe(
             idx, enabled=True, setpoint=level.temp_c, _from_preset=True
         )
