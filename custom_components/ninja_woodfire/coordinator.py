@@ -205,6 +205,7 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
         # advertisement beacon (the GATT 0x0f frame carries neither). Merged
         # into the local state.
         self.beacon_probes: list[float | None] = [None, None]
+        self.beacon_probe_states: list[str | None] = [None, None]
         self.beacon_lid: bool | None = None
         self.beacon_phase: str | None = None
         self.beacon_prompt: str | None = None
@@ -366,6 +367,15 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
         if parsed is None:
             return
         self.beacon_probes = [parsed["probe0_temp"], parsed["probe1_temp"]]
+        # Only present when the scan response (mfg2) was captured alongside
+        # the main advertisement - not guaranteed on every frame (or at all,
+        # under passive scanning - see BluetoothScanningMode.PASSIVE in
+        # __init__.py). Keep the last known state rather than blank it out
+        # on a frame that simply didn't carry it.
+        if parsed.get("probe0_state") is not None:
+            self.beacon_probe_states[0] = parsed["probe0_state"]
+        if parsed.get("probe1_state") is not None:
+            self.beacon_probe_states[1] = parsed["probe1_state"]
         self.beacon_lid = parsed["lid_open"]
         self.beacon_phase = parsed["phase"]
         self.beacon_prompt = parsed["prompt"]
@@ -604,6 +614,7 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
                 active=plugged and enabled,
                 temp=temp or 0.0,
                 target=ProbeMode(mode="manual", setpoint=target) if target else ProbeMode(),
+                state=self.beacon_probe_states[idx] or "none",
             ))
         state.probes = ProbeState(probes=probes)
 

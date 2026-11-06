@@ -80,8 +80,10 @@ def test_mfg1_from_advertisement_prefers_raw():
 
 def test_mfg1_from_advertisement_dict_variants():
     assert bc.mfg1_from_advertisement({bc.COMPANY_ID: CT_PROBE7_CLOSED}) == CT_PROBE7_CLOSED
+    # A combined mfg1||mfg2 blob (scan response merged in) is kept whole now -
+    # mfg2 carries the per-probe detail record parse_beacon can also decode.
     combined = CT_PROBE7_CLOSED + bytes(23)
-    assert bc.mfg1_from_advertisement({bc.COMPANY_ID: combined}) == CT_PROBE7_CLOSED
+    assert bc.mfg1_from_advertisement({bc.COMPANY_ID: combined}) == combined
     assert bc.mfg1_from_advertisement({bc.COMPANY_ID: bytes(23)}) is None
     assert bc.mfg1_from_advertisement({}) is None
 
@@ -161,6 +163,50 @@ def test_other_layouts_carry_no_timer():
 def test_existing_fields_unchanged_by_timer_decode():
     s = _p(_frame(remaining=100, total=600, phase=4))
     assert s["phase"] == "cooking" and s["prompt"] is None and s["lid_open"] is False
+
+
+# --- probe detail record (mfg2 only: ProbeState.state per probe) -----------
+# Bit-exact live-validated 2026-11-06: raw advertisement + the app's own
+# decrypted GrillCombinedState log correlated at the same millisecond, twice
+# (0xC/0xD1 -> 1/4/0x6/0x7/0x8/... PcsDoneAfterCook, then PcsGetFood).
+
+def _frame43(probe0_state=0, probe1_state=0, **mfg1_extra):
+    """A combined mfg1||mfg2 frame: two independently CTS-encrypted segments."""
+    fields = [(8, 8, 13)] + [(o, w, v) for o, (w, v) in mfg1_extra.items()]
+    plain43 = bytearray(_pack(fields, length=43))
+    for off, val in ((224, probe0_state), (272, probe1_state)):
+        for i in range(4):
+            if (val >> i) & 1:
+                plain43[(off + i) >> 3] |= 1 << ((off + i) & 7)
+    plain43 = bytes(plain43)
+    return _encrypt_segment(plain43[:20]) + _encrypt_segment(plain43[20:])
+
+
+def test_mfg1_only_frame_reports_no_probe_state():
+    # Without mfg2, there is nothing to decode it from - None, not a guess.
+    s = _p(_frame())
+    assert s["probe0_state"] is None and s["probe1_state"] is None
+
+
+def test_probe_done_after_cook_is_decoded():
+    s = _p(_frame43(probe1_state=3))
+    assert s["probe1_state"] == "done"
+
+
+def test_probe_get_food_is_decoded():
+    s = _p(_frame43(probe1_state=4))
+    assert s["probe1_state"] == "get_food"
+
+
+def test_both_probes_decoded_independently():
+    s = _p(_frame43(probe0_state=2, probe1_state=3))
+    assert s["probe0_state"] == "cooking"
+    assert s["probe1_state"] == "done"
+
+
+def test_probe_por_and_start_both_read_as_none():
+    assert _p(_frame43(probe0_state=0))["probe0_state"] == "none"
+    assert _p(_frame43(probe0_state=1))["probe0_state"] == "none"
 
 
 # --- Uim power state (live-captured layout: @16 w5)

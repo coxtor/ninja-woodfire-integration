@@ -1353,6 +1353,37 @@ async def test_update_beacon_reads_the_grills_own_timer(hass, entry):
 
 
 @pytest.mark.asyncio
+async def test_a_probe_target_reached_shows_in_the_probe_state(hass, entry):
+    # Bit-exact live-validated 2026-11-06: raw advertisement + the app's own
+    # decrypted log correlated at the same millisecond (PcsDoneAfterCook=3,
+    # PcsGetFood=4). Only decodable when the scan response (mfg2) came along
+    # with the main advertisement - see ble_beacon.mfg1_from_advertisement.
+    from .test_ble_beacon import _frame43
+
+    c = await _beacon_coordinator(hass, entry)
+    c.cook_setting_probe_enabled[1] = True
+    c.update_beacon(_frame43(probe1_state=3))
+    assert c.beacon_probe_states == ["none", "done"]
+
+    c.update_beacon(_frame43(probe1_state=4))
+    assert c.beacon_probe_states == ["none", "get_food"]
+
+    c.beacon_phase = "cooking"
+    c._merge_beacon(c.data)
+    assert c.data.probes.probes[1].state == "get_food"
+
+
+@pytest.mark.asyncio
+async def test_a_frame_without_mfg2_keeps_the_last_known_probe_state(hass, entry):
+    from .test_ble_beacon import _frame, _frame43
+
+    c = await _beacon_coordinator(hass, entry)
+    c.update_beacon(_frame43(probe1_state=3))
+    c.update_beacon(_frame())  # a plain mfg1-only frame right after
+    assert c.beacon_probe_states == ["none", "done"]
+
+
+@pytest.mark.asyncio
 async def test_beacon_timer_wins_over_the_local_estimate(hass, entry):
     # A cook started at the grill itself: the staged HA settings (600 s) have
     # nothing to do with it, the grill says 1800 s with 1234 s left.

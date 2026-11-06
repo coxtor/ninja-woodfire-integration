@@ -49,6 +49,24 @@ _PROMPT = (98, 6)    # user prompt shown on the grill display
 _REMAINING = (51, 17)  # seconds left on the cook timer (1 Hz countdown while cooking)
 _TOTAL = (104, 16)     # the cook's set duration in seconds (== remaining during preheat)
 
+# ProbeState.state within each probe's detailed record in mfg2 (only present
+# when the scan response was captured alongside the main advertisement - see
+# mfg1_from_advertisement). Bit-exact live-validated 2026-11-06 against the
+# app's own GrillCombinedState log, two sessions: 0/1/2 = PcsPOR/PcsStart/
+# PcsCooking (3 transitions), then 3/4 = PcsDoneAfterCook/PcsGetFood (probe
+# hit its target, raw advertisement + app log correlated at the same
+# millisecond). Mapped to the same vocabulary ProbeInfo.state already uses
+# for the cloud backends (models.py).
+_PROBE0_STATE = (224, 4)
+_PROBE1_STATE = (272, 4)
+_PROBE_STATE_MAP = {
+    0: "none",       # PcsPOR - no target / idle
+    1: "none",       # PcsStart - target just set, not yet meaningfully progressing
+    2: "cooking",    # PcsCooking
+    3: "done",       # PcsDoneAfterCook
+    4: "get_food",   # PcsGetFood
+}
+
 # The firmware's own UI state machine ("Uim"). The grill keeps advertising
 # this beacon even with its display fully off (UimPowerOff) - it only stops
 # advertising while a GATT client holds a connection. Without this the
@@ -94,8 +112,12 @@ _TIMER_MAX_S = 12 * 3600
 _PROBE_MAX_C = 300
 
 # The main advertisement's manufacturer data (mfg1) is 20 bytes; the scan
-# response's (mfg2) is 23. mfg1 holds every field we decode.
+# response's (mfg2) is 23. mfg1 holds every field we decode except the
+# per-probe detail record (ProbeState.state and friends), which only mfg2
+# carries - decoded when we happen to have it, since not every HA Bluetooth
+# backend hands us the scan response alongside the main advertisement.
 _MFG1_LEN = 20
+_MFG2_LEN = 23
 
 
 def _aes_dec(block: bytes, key: bytes) -> bytes:
@@ -152,8 +174,14 @@ def _timer(plain: bytes) -> tuple[int | None, int | None]:
     return remaining, total
 
 
-def _first_mfg_ad(raw: bytes) -> bytes | None:
-    """Return the data of the first company-0x0C4F manufacturer AD in a raw adv."""
+def _all_mfg_ads(raw: bytes) -> list[bytes]:
+    """Return the data of every company-0x0C4F manufacturer AD in a raw adv.
+
+    Usually one (mfg1, from the main advertisement); some stacks (observed:
+    Android's own merged ScanRecord) hand us both mfg1 and the scan
+    response's mfg2 concatenated into a single raw blob as two separate ADs.
+    """
+    out = []
     i = 0
     while i + 1 < len(raw):
         length = raw[i]
@@ -161,28 +189,33 @@ def _first_mfg_ad(raw: bytes) -> bytes | None:
             break
         ad = raw[i + 1 : i + 1 + length]
         if len(ad) >= 3 and ad[0] == 0xFF and ad[1] == 0x4F and ad[2] == 0x0C:
-            return bytes(ad[3:])
+            out.append(bytes(ad[3:]))
         i += 1 + length
-    return None
+    return out
 
 
 def mfg1_from_advertisement(
     manufacturer_data: dict[int, bytes] | None, raw: bytes | None = None
 ) -> bytes | None:
-    """Pick the main-advertisement manufacturer ciphertext (mfg1) from HA adv data.
+    """Pick the manufacturer ciphertext from HA adv data: mfg1 alone, or
+    mfg1||mfg2 (43 bytes) when the scan response's mfg2 is also available.
 
     bleak may surface the raw advertisement or a per-company manufacturer_data
-    map. In the raw adv the first company-0x0C4F AD is always mfg1; otherwise we
-    take the map entry and keep its first 20 bytes (a combined mfg1||mfg2 blob
-    starts with mfg1). A lone 23-byte mfg2 carries none of our fields, so it is
-    rejected.
+    map. In the raw adv, mfg1 is the first company-0x0C4F AD and a second one
+    (if present) is mfg2; otherwise the map entry is already whatever bleak
+    merged under that company ID (20, 23, or 43 bytes). A lone 23-byte mfg2
+    with no mfg1 carries none of our fields and is rejected.
     """
     if raw:
-        blob = _first_mfg_ad(raw)
-        if blob and len(blob) >= _MFG1_LEN:
-            return blob[:_MFG1_LEN]
+        ads = _all_mfg_ads(raw)
+        if ads and len(ads[0]) >= _MFG1_LEN:
+            if len(ads) > 1 and len(ads[1]) >= _MFG2_LEN:
+                return ads[0][:_MFG1_LEN] + ads[1][:_MFG2_LEN]
+            return ads[0][:_MFG1_LEN]
     blob = (manufacturer_data or {}).get(COMPANY_ID)
-    if blob and len(blob) >= _MFG1_LEN and len(blob) != 23:
+    if blob and len(blob) >= _MFG1_LEN + _MFG2_LEN:
+        return bytes(blob[: _MFG1_LEN + _MFG2_LEN])
+    if blob and len(blob) >= _MFG1_LEN and len(blob) != _MFG2_LEN:
         return bytes(blob[:_MFG1_LEN])
     return None
 
@@ -198,6 +231,13 @@ def parse_beacon(mfg: bytes | None, key: bytes, iv: bytes) -> dict | None:
         return None
     plain = _decrypt_segment(bytes(mfg[:_MFG1_LEN]), key, iv)
     remaining, total = _timer(plain)
+    probe0_state = probe1_state = None
+    if len(mfg) >= _MFG1_LEN + _MFG2_LEN:
+        # mfg2 is a second, independent CTS segment - decrypted separately,
+        # not just more bytes of mfg1's.
+        plain += _decrypt_segment(bytes(mfg[_MFG1_LEN : _MFG1_LEN + _MFG2_LEN]), key, iv)
+        probe0_state = _PROBE_STATE_MAP.get(_bitread(plain, *_PROBE0_STATE))
+        probe1_state = _PROBE_STATE_MAP.get(_bitread(plain, *_PROBE1_STATE))
     return {
         "probe0_temp": _probe_c(_bitread(plain, *_PROBE0)),
         "probe1_temp": _probe_c(_bitread(plain, *_PROBE1)),
@@ -207,4 +247,6 @@ def parse_beacon(mfg: bytes | None, key: bytes, iv: bytes) -> dict | None:
         "remaining_s": remaining,
         "total_s": total,
         "powered_off": _bitread(plain, *_UIM) in (_UIM_POWERED_OFF, _UIM_POWERING_OFF),
+        "probe0_state": probe0_state,
+        "probe1_state": probe1_state,
     }
