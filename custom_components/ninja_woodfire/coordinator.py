@@ -487,6 +487,16 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
             # (in ACTIVE_STATES) so a lid flap during a cook can't be
             # mistaken for a stop/restart.
             state.grill.state = "lid_open"
+        elif self.beacon_phase is None and self._cook_seen and is_active(state):
+            # Live-observed 2026-11-06: once preheat/ignition genuinely ends,
+            # the beacon's phase bits go blank again for ordinary steady-state
+            # cooking (the firmware only flags the special phases, not
+            # "cooking" itself outside the one explicit branch above, which a
+            # local/BLE grill rarely if ever reports). Without this, state
+            # just carries over whatever it was before (typically "preheat"),
+            # sticking there for the rest of the cook - the card kept
+            # showing "Preheating" long after the grill had moved on.
+            state.grill.state = "cooking"
         elif self.beacon_phase is None and self.beacon_powered_off and not is_active(state):
             # The grill still advertises with its display fully off (Uim ==
             # UimPowerOff) - it only stops advertising while a GATT client is

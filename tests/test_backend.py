@@ -1386,6 +1386,28 @@ async def test_beacon_timer_during_preheat_is_the_planned_duration(hass, entry):
 
 
 @pytest.mark.asyncio
+async def test_preheat_ending_moves_to_cooking_even_with_a_blank_phase(hass, entry):
+    # Live-observed 2026-11-06: once preheat genuinely ends, the beacon's
+    # phase bits go blank again for ordinary steady-state cooking - without
+    # an explicit "now cooking" classification for that case, state just
+    # carried over "preheat" from before and stuck there for the rest of
+    # the cook.
+    import time as _time
+
+    c = await _beacon_coordinator(hass, entry)
+    c.beacon_phase = "preheat"
+    c.beacon_remaining, c.beacon_total = 1800, 1800
+    c._beacon_at = _time.monotonic()
+    c._merge_beacon(c.data)
+    assert c.data.grill.state == "preheat"
+
+    c.beacon_phase = None
+    c.beacon_remaining = c.beacon_total = None
+    c._merge_beacon(c.data)
+    assert c.data.grill.state == "cooking"
+
+
+@pytest.mark.asyncio
 async def test_without_a_beacon_timer_the_local_estimate_still_runs(hass, entry):
     import time as _time
 
