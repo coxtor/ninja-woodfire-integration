@@ -47,6 +47,7 @@ from .const import (
     EVENT_PROBE_RESTING_STARTED,
     EVENT_PROBE_HALFWAY,
     EVENT_PROBE_TARGET_REACHED,
+    EVENT_START_BLOCKED_BY_RESTING_PROBE,
     EVENT_START_NOT_CONFIRMED,
     START_CONFIRM_GRACE,
     IDLE_STATES,
@@ -1533,6 +1534,22 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
     async def _verify_start_confirmed(self) -> None:
         await asyncio.sleep(START_CONFIRM_GRACE.total_seconds())
         if self._cook_seen:
+            return
+        if self._post_cook_hold is not None:
+            # Live-confirmed 2026-11-06: a previous probe's Rest window can
+            # keep the beacon reporting "get_food" indefinitely - a remote
+            # Stop cannot cancel it (only the grill's own physical button
+            # can), so a new cook genuinely can't start yet. The grill is
+            # awake and busy, not asleep - "try Wake" here would be actively
+            # wrong, there's nothing to wake.
+            self.async_update_listeners()
+            _LOGGER.warning(
+                "Grill %s: start_cook was sent but a previous probe's Rest "
+                "window is still active - the new cook can't begin until it "
+                "clears (open/close the lid, or finish it at the grill itself)",
+                self.dsn,
+            )
+            self.hass.bus.async_fire(EVENT_START_BLOCKED_BY_RESTING_PROBE, {"dsn": self.dsn})
             return
         self._likely_asleep = True
         self.async_update_listeners()

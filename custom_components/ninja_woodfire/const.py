@@ -66,4 +66,12 @@ EVENT_PROMPT = "ninja_woodfire_prompt"
 # grill is most likely still asleep and ignored it. See
 # coordinator._verify_start_confirmed.
 EVENT_START_NOT_CONFIRMED = "ninja_woodfire_start_not_confirmed"
+# Fired instead of EVENT_START_NOT_CONFIRMED when a previous probe's post-
+# target Rest window (see coordinator._REST_TOTAL_SECONDS) is still blocking
+# the beacon's phase signal. Live-confirmed 2026-11-06: a remote Stop cannot
+# cancel an already-resting probe at all - only the grill's own physical
+# button can - so a new cook genuinely cannot start yet, but the grill is
+# awake and busy, not asleep. Suggesting Wake here would be actively
+# misleading (there is nothing to wake).
+EVENT_START_BLOCKED_BY_RESTING_PROBE = "ninja_woodfire_start_blocked_by_resting_probe"
 START_CONFIRM_GRACE = timedelta(seconds=25)

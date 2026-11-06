@@ -669,6 +669,47 @@ async def test_a_confirmed_start_fires_no_event(hass, entry):
 
 
 @pytest.mark.asyncio
+async def test_start_blocked_by_a_resting_probe_fires_its_own_event_not_asleep(hass, entry):
+    # Live-confirmed 2026-11-06: a previous probe's Rest window can keep the
+    # beacon reporting "get_food" indefinitely - remote Stop cannot cancel it
+    # (only the grill's own physical button can), so starting a new cook
+    # right after genuinely can't be confirmed. The grill is awake and busy,
+    # not asleep - must not fire the "likely asleep, try Wake" signal, which
+    # would be actively wrong here.
+    import time as _time
+    from unittest.mock import AsyncMock, patch
+    from pytest_homeassistant_custom_component.common import async_capture_events
+    from custom_components.ninja_woodfire.coordinator import NinjaWoodfireCoordinator
+    from custom_components.ninja_woodfire.const import (
+        EVENT_START_BLOCKED_BY_RESTING_PROBE, EVENT_START_NOT_CONFIRMED,
+    )
+    from custom_components.ninja_woodfire._lib.capabilities import WOODFIRE_PRO_XL
+
+    ble = AsyncMock()
+    ble.get_combined_state.return_value = mk_state()
+    c = NinjaWoodfireCoordinator(hass, entry, None, DSN, WOODFIRE_PRO_XL, 0, ble=ble,
+                                 beacon_slot=_BEACON_SLOT)
+    await c.async_refresh()
+    c._burst_refresh = AsyncMock()
+    c._cook_seen = True
+    c.beacon_phase = "get_food"
+    c._beacon_at = _time.monotonic()
+    c._merge_beacon(c.data)
+    assert c._post_cook_hold == "get_food"
+
+    blocked_events = async_capture_events(hass, EVENT_START_BLOCKED_BY_RESTING_PROBE)
+    not_confirmed_events = async_capture_events(hass, EVENT_START_NOT_CONFIRMED)
+
+    with patch("custom_components.ninja_woodfire.coordinator.asyncio.sleep", AsyncMock()):
+        await c.async_start_cook()
+        await hass.async_block_till_done()
+
+    assert [e.data["dsn"] for e in blocked_events] == [DSN]
+    assert not_confirmed_events == []
+    assert c.likely_asleep is False
+
+
+@pytest.mark.asyncio
 async def test_likely_asleep_tracks_unconfirmed_starts_and_clears_on_wake(hass, entry):
     # The card uses this to offer Wake instead of Start before the next try.
     import time as _time
