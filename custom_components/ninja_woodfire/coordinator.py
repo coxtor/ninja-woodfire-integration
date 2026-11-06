@@ -487,24 +487,36 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
             # (in ACTIVE_STATES) so a lid flap during a cook can't be
             # mistaken for a stop/restart.
             state.grill.state = "lid_open"
-        elif self.beacon_phase is None and self._cook_seen and is_active(state):
+        elif self.beacon_phase is None and self._cook_seen:
             # Live-observed 2026-11-06: once preheat/ignition genuinely ends,
             # the beacon's phase bits go blank again for ordinary steady-state
             # cooking (the firmware only flags the special phases, not
             # "cooking" itself outside the one explicit branch above, which a
             # local/BLE grill rarely if ever reports). Without this, state
-            # just carries over whatever it was before (typically "preheat"),
-            # sticking there for the rest of the cook - the card kept
-            # showing "Preheating" long after the grill had moved on.
+            # just carried over whatever it was before (typically "preheat"),
+            # sticking there for the rest of the cook.
+            # self._cook_seen, not is_active(state): the slow GATT poll hands
+            # in a freshly-built state with no grill_state of its own (no 0x0f
+            # frame locally), so is_active(state) reads False on that cycle
+            # even mid-cook - which briefly flashed the card to "Ready" every
+            # time a poll happened to land while the phase bits were blank.
+            # self._cook_seen is this coordinator's own persistent memory of
+            # being mid-cook, unaffected by what any one poll handed in.
             state.grill.state = "cooking"
-        elif self.beacon_phase is None and self.beacon_powered_off and not is_active(state):
+        elif self.beacon_phase is None and self.beacon_powered_off:
             # The grill still advertises with its display fully off (Uim ==
             # UimPowerOff) - it only stops advertising while a GATT client is
             # connected. Without this, a sleeping-but-beaconing grill reads
             # identically to a genuinely idle one (no phase either way) and
             # the card would offer a Start the firmware silently ignores.
+            # Independent of _cook_seen (unlike the other blank-phase branches
+            # here): PowerOff is a direct firmware signal, not an inferred
+            # one, and also doubles as this coordinator's only other way back
+            # out of "cooking" if a cook somehow ends without an explicit
+            # stop/done/prompt in between.
+            self._cook_seen = False
             state.grill.state = "powered_off"
-        elif self.beacon_phase is None and not is_active(state):
+        elif self.beacon_phase is None and not self._cook_seen:
             # A fresh beacon with no active phase means the grill is on but idle.
             # Pin it to "idle" so the card shows a stable "Ready" instead of
             # flapping to Unknown whenever the GATT state frame is absent.

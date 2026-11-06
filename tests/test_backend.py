@@ -1408,6 +1408,29 @@ async def test_preheat_ending_moves_to_cooking_even_with_a_blank_phase(hass, ent
 
 
 @pytest.mark.asyncio
+async def test_a_blank_phase_mid_cook_does_not_flash_idle_on_a_fresh_poll(hass, entry):
+    # Live-observed 2026-11-06 ("springt kurz auf Ready"): the slow GATT poll
+    # builds a brand new CombinedState with no grill_state of its own (no
+    # 0x0f frame locally) - is_active() on that fresh object reads False even
+    # mid-cook, purely because nothing has set it yet this cycle. Gating the
+    # "still cooking" classification on that instead of this coordinator's
+    # own persistent _cook_seen briefly flashed the card to idle every time a
+    # slow poll happened to land while the beacon's phase bits were blank.
+    import time as _time
+
+    c = await _beacon_coordinator(hass, entry)
+    c.beacon_phase = "cooking"
+    c._beacon_at = _time.monotonic()
+    c._merge_beacon(c.data)
+    assert c._cook_seen is True
+
+    fresh = mk_state()  # what a slow poll with no 0x0f frame hands in
+    c.beacon_phase = None
+    c._merge_beacon(fresh)
+    assert fresh.grill.state == "cooking"
+
+
+@pytest.mark.asyncio
 async def test_without_a_beacon_timer_the_local_estimate_still_runs(hass, entry):
     import time as _time
 
