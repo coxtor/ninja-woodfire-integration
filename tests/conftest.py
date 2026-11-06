@@ -22,6 +22,7 @@ from custom_components.ninja_woodfire.const import (
     EVENT_PREHEAT_COMPLETE,
     EVENT_PROBE_ALARM,
     EVENT_PROBE_HALFWAY,
+    EVENT_PROBE_RESTING_STARTED,
     EVENT_PROBE_TARGET_REACHED,
 )
 from custom_components.ninja_woodfire.coordinator import NinjaWoodfireCoordinator
@@ -70,13 +71,14 @@ def cooking(mode="roast", setpoint=200, left=900, total=1800, state="cooking", *
     }
 
 
-def probe(temp=40, setpoint=74, active=1, name="probe0"):
+def probe(temp=40, setpoint=74, active=1, name="probe0", state="none"):
     return {
         "name": name,
         "plugged in": 1,
         "active": active,
         "temp": temp,
         "mode": {"mode": "manual", "setpoint": setpoint},
+        "state": {"state": state},
     }
 
 
@@ -99,7 +101,8 @@ def coordinator(hass, entry):
 def events(hass):
     seen = []
     for ev in (EVENT_COOK_DONE, EVENT_COOK_HALFTIME, EVENT_COOK_STARTED, EVENT_PREHEAT_COMPLETE,
-               EVENT_PROBE_ALARM, EVENT_PROBE_HALFWAY, EVENT_PROBE_TARGET_REACHED):
+               EVENT_PROBE_ALARM, EVENT_PROBE_HALFWAY, EVENT_PROBE_RESTING_STARTED,
+               EVENT_PROBE_TARGET_REACHED):
         hass.bus.async_listen(ev, lambda e: seen.append(e.event_type))
     return seen
 

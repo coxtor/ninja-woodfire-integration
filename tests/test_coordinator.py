@@ -13,6 +13,7 @@ from custom_components.ninja_woodfire.const import (
     EVENT_PREHEAT_COMPLETE,
     EVENT_PROBE_ALARM,
     EVENT_PROBE_HALFWAY,
+    EVENT_PROBE_RESTING_STARTED,
     EVENT_PROBE_TARGET_REACHED,
     SCAN_INTERVAL_ACTIVE,
     SCAN_INTERVAL_IDLE,
@@ -341,6 +342,55 @@ async def test_probe_halfway_measured_from_start_temp(hass, coordinator, events)
     assert events.count(EVENT_PROBE_HALFWAY) == 1
     await _feed(hass, coordinator, st(74))
     assert events.count(EVENT_PROBE_TARGET_REACHED) == 1
+
+
+async def test_probe_resting_started_fires_once_entering_the_rest_window(hass, coordinator, events):
+    # The Rest window (see coordinator._REST_TOTAL_SECONDS) is the one
+    # sub-state of a probe-driven cook with a real countdown - without a
+    # dedicated event, those seconds_left/seconds_set never reach a
+    # notification (by cook_done they're already cleared).
+    def st(probe_state, left=140, total=300):
+        return mk_state(
+            cooking(left=left, total=total),
+            probes={"probes": [probe(temp=75, setpoint=75, state=probe_state)]},
+        )
+
+    await _feed(hass, coordinator, mk_state(), st("cooking"))
+    assert EVENT_PROBE_RESTING_STARTED not in events
+
+    await _feed(hass, coordinator, st("resting", left=140))
+    assert events.count(EVENT_PROBE_RESTING_STARTED) == 1
+
+    # Still resting next poll - must not re-fire.
+    await _feed(hass, coordinator, st("resting", left=100))
+    assert events.count(EVENT_PROBE_RESTING_STARTED) == 1
+
+
+async def test_probe_resting_started_carries_the_countdown(hass, coordinator):
+    state = mk_state(
+        cooking(left=140, total=300),
+        probes={"probes": [probe(temp=75, setpoint=75, state="resting")]},
+    )
+    payloads = await _feed_with_payload(
+        hass, coordinator, EVENT_PROBE_RESTING_STARTED, mk_state(), state,
+    )
+    data = payloads[-1]
+    assert data["seconds_left"] == 140
+    assert data["seconds_set"] == 300
+
+
+async def test_probe_resting_started_fires_again_for_a_later_episode(hass, coordinator, events):
+    def st(probe_state):
+        return mk_state(
+            cooking(left=140, total=300),
+            probes={"probes": [probe(temp=75, setpoint=75, state=probe_state)]},
+        )
+
+    await _feed(hass, coordinator, mk_state(), st("resting"))
+    assert events.count(EVENT_PROBE_RESTING_STARTED) == 1
+
+    await _feed(hass, coordinator, st("done"), st("resting"))
+    assert events.count(EVENT_PROBE_RESTING_STARTED) == 2
 
 
 # ---------------------------------------------------------------- status snapshot

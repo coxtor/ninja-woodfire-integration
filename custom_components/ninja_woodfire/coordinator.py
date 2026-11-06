@@ -44,6 +44,7 @@ from .const import (
     EVENT_PREHEAT_COMPLETE,
     EVENT_PROMPT,
     EVENT_PROBE_ALARM,
+    EVENT_PROBE_RESTING_STARTED,
     EVENT_PROBE_HALFWAY,
     EVENT_PROBE_TARGET_REACHED,
     EVENT_START_NOT_CONFIRMED,
@@ -897,6 +898,7 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
         self._probe_target: list[int | None] = [None, None]
         self._probe_halfway_fired = [False, False]
         self._probe_target_fired = [False, False]
+        self._probe_resting_fired = [False, False]
 
     def _seed_cook_flags(self, state: CombinedState) -> None:
         """Mark milestones already passed so a restart doesn't re-fire them."""
@@ -1041,6 +1043,12 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
             if not self._probe_target_fired[idx] and probe.temp >= target:
                 self._probe_target_fired[idx] = True
                 fire(EVENT_PROBE_TARGET_REACHED, base)
+            if probe.state == "resting":
+                if not self._probe_resting_fired[idx]:
+                    self._probe_resting_fired[idx] = True
+                    fire(EVENT_PROBE_RESTING_STARTED, base)
+            else:
+                self._probe_resting_fired[idx] = False
         for idx, probe in enumerate(state.probes.probes[:2]):
             # Independent of probe.active (the target/enabled mechanism that
             # drives temperature-controlled cooking, exclusive with a timed

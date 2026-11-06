@@ -52,6 +52,14 @@ EVENT_PROBE_HALFWAY = "ninja_woodfire_probe_halfway"
 # time-controlled cook without touching the exclusive cook-style the
 # firmware itself enforces.
 EVENT_PROBE_ALARM = "ninja_woodfire_probe_alarm"
+# Fires once a probe enters the firmware's fixed 300 s post-target Rest
+# window (see coordinator._REST_TOTAL_SECONDS) - the one sub-state of a
+# probe-driven cook with a real countdown, shown on the grill's own physical
+# display but never surfaced by the app's own UI. Without a dedicated event,
+# the status snapshot's seconds_left/seconds_set never actually reaches a
+# notification: by the time cook_done fires, the window (and the ground-truth
+# Uim-idle override that releases it) has already cleared those fields.
+EVENT_PROBE_RESTING_STARTED = "ninja_woodfire_probe_resting_started"
 EVENT_PROMPT = "ninja_woodfire_prompt"
 # Fired when a local BLE start_cook produced no independent confirmation
 # (beacon never showed an active phase) within the grace window below — the
