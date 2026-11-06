@@ -389,9 +389,11 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
         self.beacon_powered_off = bool(parsed.get("powered_off"))
         if _LOGGER.isEnabledFor(logging.DEBUG):
             _LOGGER.debug(
-                "Beacon decoded: phase=%r lid=%r prompt=%r probes=%r timer=%r/%r",
-                parsed["phase"], parsed["lid_open"], parsed["prompt"], self.beacon_probes,
-                self.beacon_remaining, self.beacon_total,
+                "Beacon decoded: mfg_len=%d phase=%r lid=%r prompt=%r probes=%r timer=%r/%r "
+                "probe_states=%r",
+                len(mfg) if mfg else 0, parsed["phase"], parsed["lid_open"], parsed["prompt"],
+                self.beacon_probes, self.beacon_remaining, self.beacon_total,
+                self.beacon_probe_states,
             )
         self._beacon_at = time.monotonic()
         self._last_contact_m = self._beacon_at   # a beacon means the grill is reachable
