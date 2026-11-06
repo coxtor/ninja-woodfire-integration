@@ -12,6 +12,7 @@ import asyncio
 import pytest
 
 from custom_components.ninja_woodfire._lib.capabilities import WOODFIRE_PRO_XL
+from custom_components.ninja_woodfire._lib.probe_presets import PROBE_FOOD_MANUAL
 from custom_components.ninja_woodfire.coordinator import NinjaWoodfireCoordinator
 
 from .conftest import DSN, cooking, mk_state, probe
@@ -334,6 +335,32 @@ async def test_a_probe_can_still_be_switched_off(hass, entry):
     await c.async_configure_cook(probes={0: {"enabled": False}})
 
     assert calls[-1]["probe_0"] is None
+
+
+@pytest.mark.asyncio
+async def test_a_probe_target_change_via_configure_cook_resets_the_preset_too(hass, entry):
+    # The card's manual target field applies through this atomic path, not
+    # async_set_probe - it needs the same "hand-typed value clears the
+    # preset" reset, or the select would keep showing a stale food/doneness.
+    c, ble = _cloud_coordinator(hass, entry, probes={"probes": [probe(setpoint=70)]})
+    await c.async_refresh()
+    await c.async_set_probe_food(0, "Beef")
+    assert c.live_or_staged_probe_food(0) == "Beef"
+
+    await c.async_configure_cook(probes={0: {"setpoint": 72}})
+
+    assert c.live_or_staged_probe_food(0) == PROBE_FOOD_MANUAL
+
+
+@pytest.mark.asyncio
+async def test_switching_a_probe_off_via_configure_cook_resets_the_preset_too(hass, entry):
+    c, ble = _cloud_coordinator(hass, entry, probes={"probes": [probe(setpoint=42)]})
+    await c.async_refresh()
+    await c.async_set_probe_food(0, "Beef")
+
+    await c.async_configure_cook(probes={0: {"enabled": False}})
+
+    assert c.live_or_staged_probe_food(0) == PROBE_FOOD_MANUAL
 
 
 @pytest.mark.asyncio

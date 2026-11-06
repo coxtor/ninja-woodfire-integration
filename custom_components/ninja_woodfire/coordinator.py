@@ -1033,8 +1033,19 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
         for idx, cfg in (probes or {}).items():
             if cfg.get("enabled") is not None:
                 self.cook_setting_probe_enabled[idx] = bool(cfg["enabled"])
+                if not cfg["enabled"]:
+                    # Same reset as async_set_probe's toggle-off case: a
+                    # target no longer live shouldn't show a stale preset.
+                    self.cook_setting_probe_food[idx] = PROBE_FOOD_MANUAL
+                    self.cook_setting_probe_doneness_index[idx] = 0
             if cfg.get("setpoint") is not None:
                 self.cook_setting_probe_setpoint[idx] = int(cfg["setpoint"])
+                # This path (the configure_cook service / the card's atomic
+                # Apply) is never used by the preset selects themselves - see
+                # async_set_probe's docstring - so any setpoint arriving here
+                # is a hand-typed one and always resets the preset.
+                self.cook_setting_probe_food[idx] = PROBE_FOOD_MANUAL
+                self.cook_setting_probe_doneness_index[idx] = 0
         # Smoking without smoke makes no sense: a mode that requires smoke keeps
         # it on, so the staged value (and the card's smoke switch) stay consistent.
         staged = self.capabilities.get_mode(self.cook_setting_mode)
