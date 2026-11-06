@@ -1502,28 +1502,23 @@ async def test_a_probe_only_cook_that_never_had_a_timer_shows_no_fake_countdown(
 
 
 @pytest.mark.asyncio
-async def test_a_probe_cook_that_did_have_a_real_duration_freezes_on_dropout(hass, entry):
+async def test_a_probe_cook_shows_no_timer_even_if_the_beacon_briefly_looked_like_one(hass, entry):
     import time as _time
 
-    # A cook with both a real duration AND a probe: a genuine total was seen
-    # earlier (e.g. during preheat), so the later dropout hits the existing
-    # "beacon went quiet mid-cook" freeze, not the new timerless-cook path -
-    # and specifically keeps the real (non-estimated) last reading rather
-    # than switching to a fabricated one.
+    # Confirmed by the user (grill owner): temperature-controlled and
+    # time-controlled cooking are mutually exclusive on this firmware. A
+    # probe target is therefore never paired with a real duration - any
+    # beacon reading that looks like one while a probe is active is noise,
+    # not evidence of a genuine timer to freeze on dropout.
     c = await _beacon_coordinator(hass, entry)
     c.cook_setting_seconds = 900
     c.cook_setting_probe_enabled[0] = True
-    c.beacon_phase = "preheat"
-    c.beacon_remaining, c.beacon_total = 900, 900
-    c._beacon_at = _time.monotonic()
-    c._merge_beacon(c.data)
-    assert c._real_duration_seen is True
-
     c.beacon_phase = "cooking"
     c.beacon_remaining = c.beacon_total = None
+    c._beacon_at = _time.monotonic()
     c._merge_beacon(c.data)
     g = c.data.grill
-    assert (g.seconds_set, g.seconds_left, g.timer_estimated) == (900, 900, False)
+    assert (g.seconds_set, g.seconds_left, g.timer_estimated) == (None, None, False)
 
 
 @pytest.mark.asyncio
