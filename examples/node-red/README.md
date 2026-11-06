@@ -17,6 +17,7 @@ notification each:
 | `ninja_woodfire_probe_target_reached` | Probe target reached |
 | `ninja_woodfire_cook_done` | Cook done / stopped (+ clears probe notifications) |
 | `ninja_woodfire_prompt` | Display prompt (add / flip / get food) |
+| `ninja_woodfire_probe_alarm` | Probe alarm threshold reached (works independently of a probe target, even during a time-based cook) |
 
 ## Import & setup
 

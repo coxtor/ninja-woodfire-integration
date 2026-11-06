@@ -47,10 +47,15 @@ Matching Lovelace card: [ninja-woodfire-card](https://github.com/coxtor/ninja-wo
   level, probe targets and elapsed time.
 - **Sensors** — grill / air / smoke / meat-probe temperatures, cook & preheat
   progress, end-time, mode, setpoint, lid, per-probe status & target.
+- **Probe alarm** — a plain temperature threshold per probe
+  (`number.probeN_alarm_temp` / `switch.probeN_alarm_enabled`), independent of
+  the probe-target mechanism. It fires off a plugged-in probe's actual
+  temperature regardless of cook style, so it also works as a simple
+  thermometer alert during a time-based cook.
 - **Diagnostics** — connection, backend, last report, Wi-Fi signal, poll health.
 - **Events** for automations: `cook_started`, `preheat_complete`,
   `cook_halftime`, `cook_done`, `probe_halfway`, `probe_target_reached`,
-  `prompt` (all prefixed `ninja_woodfire_`).
+  `probe_alarm`, `prompt` (all prefixed `ninja_woodfire_`).
 
 ## Install & set up
 
@@ -208,7 +213,25 @@ automation:
       - service: notify.mobile_app
         data:
           message: "Probe 1 reached {{ trigger.event.data.target }}°C."
+
+  - alias: "Probe alarm"
+    trigger:
+      - platform: event
+        event_type: ninja_woodfire_probe_alarm
+    action:
+      - service: notify.mobile_app
+        data:
+          message: >-
+            Probe {{ trigger.event.data.probe_index + 1 }} hit
+            {{ trigger.event.data.current }}°C
+            (alarm set to {{ trigger.event.data.threshold }}°C).
 ```
+
+The alarm is set with `number.probeN_alarm_temp` + `switch.probeN_alarm_enabled`
+— it fires off the probe's real temperature as soon as it's plugged in, whether
+or not a cook is probe-driven, so it also works as a plain thermometer alert
+during a time-based cook. It re-arms once the temperature drops back below the
+threshold.
 
 ## Cloud notes
 
