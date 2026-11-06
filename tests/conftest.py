@@ -20,6 +20,7 @@ from custom_components.ninja_woodfire.const import (
     EVENT_COOK_HALFTIME,
     EVENT_COOK_STARTED,
     EVENT_PREHEAT_COMPLETE,
+    EVENT_PELLET_REFILL_REMINDER,
     EVENT_PROBE_ALARM,
     EVENT_PROBE_HALFWAY,
     EVENT_PROBE_RESTING_STARTED,
@@ -101,8 +102,8 @@ def coordinator(hass, entry):
 def events(hass):
     seen = []
     for ev in (EVENT_COOK_DONE, EVENT_COOK_HALFTIME, EVENT_COOK_STARTED, EVENT_PREHEAT_COMPLETE,
-               EVENT_PROBE_ALARM, EVENT_PROBE_HALFWAY, EVENT_PROBE_RESTING_STARTED,
-               EVENT_PROBE_TARGET_REACHED):
+               EVENT_PELLET_REFILL_REMINDER, EVENT_PROBE_ALARM, EVENT_PROBE_HALFWAY,
+               EVENT_PROBE_RESTING_STARTED, EVENT_PROBE_TARGET_REACHED):
         hass.bus.async_listen(ev, lambda e: seen.append(e.event_type))
     return seen
 

@@ -225,6 +225,12 @@
       },
       "probe1_alarm_temp": {
         "name": "Sonde 2 Alarmtemp"
+      },
+      "pellet_reminder_interval": {
+        "name": "Pellet-Nachfüll-Erinnerung Intervall"
+      },
+      "pellet_reminder_count": {
+        "name": "Pellet-Nachfüll-Erinnerung Anzahl"
       }
     },
     "switch": {

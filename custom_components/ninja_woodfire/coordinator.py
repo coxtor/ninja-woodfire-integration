@@ -43,6 +43,7 @@ from .const import (
     EVENT_COOK_STARTED,
     EVENT_PREHEAT_COMPLETE,
     EVENT_PROMPT,
+    EVENT_PELLET_REFILL_REMINDER,
     EVENT_PROBE_ALARM,
     EVENT_PROBE_RESTING_STARTED,
     EVENT_PROBE_HALFWAY,
@@ -192,6 +193,14 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
         self.probe_alarm_temp: list[int | None] = [None, None]
         self.probe_alarm_enabled: list[bool] = [False, False]
         self._probe_alarm_fired = [False, False]
+        # Pellet-refill reminder (bonus feature, not in the vendor app):
+        # HA-side only, fires every `pellet_reminder_interval_min` minutes of
+        # cook time while cook_setting_smoke is on, up to
+        # `pellet_reminder_count` times per cook (0 = disabled), then stops.
+        self.pellet_reminder_interval_min: int = 45
+        self.pellet_reminder_count: int = 0
+        self._pellet_reminder_fired_count: int = 0
+        self._pellet_reminder_anchor_m: float | None = None
         # The firmware reports grill mode as °C and resets "seconds set" to
         # the remaining time on every re-issue. Remember what we sent so the
         # live state can be mapped back to what the user chose.
@@ -900,6 +909,8 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
         self._probe_halfway_fired = [False, False]
         self._probe_target_fired = [False, False]
         self._probe_resting_fired = [False, False]
+        self._pellet_reminder_fired_count = 0
+        self._pellet_reminder_anchor_m = time.monotonic()
 
     def _seed_cook_flags(self, state: CombinedState) -> None:
         """Mark milestones already passed so a restart doesn't re-fire them."""
@@ -1069,6 +1080,25 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
                 })
             elif probe.temp < threshold:
                 self._probe_alarm_fired[idx] = False  # re-arm once it drops back below
+
+        # Pellet-refill reminder (bonus feature, see EVENT_PELLET_REFILL_REMINDER).
+        if (
+            active and self.cook_setting_smoke and self.pellet_reminder_count > 0
+            and self._pellet_reminder_anchor_m is not None
+        ):
+            interval_s = self.pellet_reminder_interval_min * 60
+            elapsed = time.monotonic() - self._pellet_reminder_anchor_m
+            while (
+                self._pellet_reminder_fired_count < self.pellet_reminder_count
+                and elapsed >= (self._pellet_reminder_fired_count + 1) * interval_s
+            ):
+                self._pellet_reminder_fired_count += 1
+                fire(EVENT_PELLET_REFILL_REMINDER, {
+                    **common,
+                    "reminder_number": self._pellet_reminder_fired_count,
+                    "reminder_count": self.pellet_reminder_count,
+                    "interval_min": self.pellet_reminder_interval_min,
+                })
 
     # ------------------------------------------------------------------ live state
 
@@ -1780,6 +1810,19 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
     async def async_set_probe_alarm_enabled(self, idx: int, enabled: bool) -> None:
         self.probe_alarm_enabled[idx] = enabled
         self._probe_alarm_fired[idx] = False
+        self.async_update_listeners()
+
+    async def async_set_pellet_reminder_interval(self, minutes: int) -> None:
+        """How often (in minutes of cook time) to nudge about refilling pellets.
+
+        HA-side only, never sent to the grill - see EVENT_PELLET_REFILL_REMINDER.
+        """
+        self.pellet_reminder_interval_min = max(1, int(minutes))
+        self.async_update_listeners()
+
+    async def async_set_pellet_reminder_count(self, count: int) -> None:
+        """How many reminders per cook before the nudge stops. 0 disables it."""
+        self.pellet_reminder_count = max(0, int(count))
         self.async_update_listeners()
 
     async def _reissue(

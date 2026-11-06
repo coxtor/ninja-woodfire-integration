@@ -75,3 +75,14 @@ EVENT_START_NOT_CONFIRMED = "ninja_woodfire_start_not_confirmed"
 # misleading (there is nothing to wake).
 EVENT_START_BLOCKED_BY_RESTING_PROBE = "ninja_woodfire_start_blocked_by_resting_probe"
 START_CONFIRM_GRACE = timedelta(seconds=25)
+
+# Bonus feature (not in the vendor app): a reminder to top up the pellet
+# hopper during a long Woodfire/smoke cook. HA-side only, like the probe
+# alarm - never sent to the grill, just a periodic nudge while
+# cook_setting_smoke is on. Fires every `pellet_reminder_interval_min`
+# minutes of cook time, up to `pellet_reminder_count` times per cook, then
+# stops (no spam on a multi-hour smoke). There's no remote re-ignite command
+# in the BLE protocol (ignition only happens as part of a cook start) and
+# none is needed here either - pellets are refilled by hand, right at the
+# grill, where the physical button is anyway.
+EVENT_PELLET_REFILL_REMINDER = "ninja_woodfire_pellet_refill_reminder"

@@ -10,6 +10,7 @@ from custom_components.ninja_woodfire.const import (
     EVENT_COOK_DONE,
     EVENT_COOK_HALFTIME,
     EVENT_COOK_STARTED,
+    EVENT_PELLET_REFILL_REMINDER,
     EVENT_PREHEAT_COMPLETE,
     EVENT_PROBE_ALARM,
     EVENT_PROBE_HALFWAY,
@@ -542,6 +543,84 @@ async def test_probe_alarm_rearms_after_dropping_back_below(hass, coordinator, e
     coordinator.probe_alarm_temp[0] = 60
     await _feed(hass, coordinator, mk_state(), st(40), st(65), st(50), st(65))
     assert events.count(EVENT_PROBE_ALARM) == 2
+
+
+async def test_pellet_reminder_fires_after_the_configured_interval_while_smoking(
+    hass, coordinator, events
+):
+    coordinator.cook_setting_smoke = True
+    coordinator.pellet_reminder_interval_min = 10
+    coordinator.pellet_reminder_count = 3
+    await _feed(hass, coordinator, mk_state(), mk_state(cooking()))
+    assert EVENT_PELLET_REFILL_REMINDER not in events
+
+    coordinator._pellet_reminder_anchor_m -= 10 * 60
+    await _feed(hass, coordinator, mk_state(cooking()))
+    assert events.count(EVENT_PELLET_REFILL_REMINDER) == 1
+
+
+async def test_pellet_reminder_does_not_fire_without_smoke(hass, coordinator, events):
+    coordinator.cook_setting_smoke = False
+    coordinator.pellet_reminder_interval_min = 10
+    coordinator.pellet_reminder_count = 3
+    await _feed(hass, coordinator, mk_state(), mk_state(cooking()))
+    coordinator._pellet_reminder_anchor_m -= 30 * 60
+    await _feed(hass, coordinator, mk_state(cooking()))
+    assert EVENT_PELLET_REFILL_REMINDER not in events
+
+
+async def test_pellet_reminder_disabled_by_default_zero_count(hass, coordinator, events):
+    coordinator.cook_setting_smoke = True
+    coordinator.pellet_reminder_interval_min = 10
+    # pellet_reminder_count left at its default (0 = disabled).
+    await _feed(hass, coordinator, mk_state(), mk_state(cooking()))
+    coordinator._pellet_reminder_anchor_m -= 30 * 60
+    await _feed(hass, coordinator, mk_state(cooking()))
+    assert EVENT_PELLET_REFILL_REMINDER not in events
+
+
+async def test_pellet_reminder_stops_after_the_configured_count(hass, coordinator, events):
+    coordinator.cook_setting_smoke = True
+    coordinator.pellet_reminder_interval_min = 10
+    coordinator.pellet_reminder_count = 2
+    await _feed(hass, coordinator, mk_state(), mk_state(cooking()))
+
+    # Jump far enough that, without the cap, several intervals would have
+    # elapsed - only 2 reminders may ever fire for this cook.
+    coordinator._pellet_reminder_anchor_m -= 60 * 60
+    await _feed(hass, coordinator, mk_state(cooking()))
+    assert events.count(EVENT_PELLET_REFILL_REMINDER) == 2
+
+
+async def test_pellet_reminder_resets_for_a_new_cook(hass, coordinator, events):
+    coordinator.cook_setting_smoke = True
+    coordinator.pellet_reminder_interval_min = 10
+    coordinator.pellet_reminder_count = 1
+    await _feed(hass, coordinator, mk_state(), mk_state(cooking()))
+    coordinator._pellet_reminder_anchor_m -= 10 * 60
+    await _feed(hass, coordinator, mk_state(cooking()))
+    assert events.count(EVENT_PELLET_REFILL_REMINDER) == 1
+
+    # Cook ends, a fresh one starts - the reminder budget must be fresh too.
+    await _feed(hass, coordinator, mk_state(), mk_state(cooking()))
+    coordinator._pellet_reminder_anchor_m -= 10 * 60
+    await _feed(hass, coordinator, mk_state(cooking()))
+    assert events.count(EVENT_PELLET_REFILL_REMINDER) == 2
+
+
+async def test_pellet_reminder_carries_its_own_payload(hass, coordinator):
+    coordinator.cook_setting_smoke = True
+    coordinator.pellet_reminder_interval_min = 15
+    coordinator.pellet_reminder_count = 5
+    await _feed(hass, coordinator, mk_state(), mk_state(cooking()))
+    coordinator._pellet_reminder_anchor_m -= 15 * 60
+    payloads = await _feed_with_payload(
+        hass, coordinator, EVENT_PELLET_REFILL_REMINDER, mk_state(cooking()),
+    )
+    data = payloads[-1]
+    assert data["reminder_number"] == 1
+    assert data["reminder_count"] == 5
+    assert data["interval_min"] == 15
 
 
 async def test_preheat_without_running_timer_uses_full_duration(coordinator):

@@ -31,6 +31,8 @@ async def async_setup_entry(
     if coordinator.capabilities.has_two_probes:
         entities.append(ProbeSetpointNumber(coordinator, probe_index=1))
         entities.append(ProbeAlarmTempNumber(coordinator, probe_index=1))
+    entities.append(PelletReminderIntervalNumber(coordinator))
+    entities.append(PelletReminderCountNumber(coordinator))
     async_add_entities(entities)
 
 
@@ -200,3 +202,58 @@ class ProbeAlarmTempNumber(NinjaWoodfireEntity, NumberEntity):
 
     async def async_set_native_value(self, value: float) -> None:
         await self.coordinator.async_set_probe_alarm_temp(self._probe_index, int(value))
+
+
+class PelletReminderIntervalNumber(NinjaWoodfireEntity, NumberEntity):
+    """How often (minutes of cook time) to nudge about refilling pellets.
+
+    Bonus feature, not in the vendor app - HA-side only, never sent to the
+    grill. Only fires while cook_setting_smoke is on (see
+    EVENT_PELLET_REFILL_REMINDER); this number is still usable regardless of
+    mode, same as the probe alarm.
+    """
+
+    _requires_live_state = False
+    _attr_translation_key = "pellet_reminder_interval"
+    _attr_native_unit_of_measurement = UnitOfTime.MINUTES
+    _attr_native_min_value = 1
+    _attr_native_max_value = 240
+    _attr_native_step = 1
+    _attr_mode = NumberMode.BOX
+    _attr_entity_category = EntityCategory.CONFIG
+    _attr_icon = "mdi:fire-circle"
+
+    def __init__(self, coordinator: NinjaWoodfireCoordinator) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.dsn}_pellet_reminder_interval"
+
+    @property
+    def native_value(self) -> float:
+        return float(self.coordinator.pellet_reminder_interval_min)
+
+    async def async_set_native_value(self, value: float) -> None:
+        await self.coordinator.async_set_pellet_reminder_interval(int(value))
+
+
+class PelletReminderCountNumber(NinjaWoodfireEntity, NumberEntity):
+    """How many pellet-refill reminders per cook before it stops. 0 disables it."""
+
+    _requires_live_state = False
+    _attr_translation_key = "pellet_reminder_count"
+    _attr_native_min_value = 0
+    _attr_native_max_value = 10
+    _attr_native_step = 1
+    _attr_mode = NumberMode.BOX
+    _attr_entity_category = EntityCategory.CONFIG
+    _attr_icon = "mdi:counter"
+
+    def __init__(self, coordinator: NinjaWoodfireCoordinator) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.dsn}_pellet_reminder_count"
+
+    @property
+    def native_value(self) -> float:
+        return float(self.coordinator.pellet_reminder_count)
+
+    async def async_set_native_value(self, value: float) -> None:
+        await self.coordinator.async_set_pellet_reminder_count(int(value))

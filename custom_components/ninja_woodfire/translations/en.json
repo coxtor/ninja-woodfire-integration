@@ -225,6 +225,12 @@
       },
       "probe1_alarm_temp": {
         "name": "Probe 2 alarm temp"
+      },
+      "pellet_reminder_interval": {
+        "name": "Pellet refill reminder interval"
+      },
+      "pellet_reminder_count": {
+        "name": "Pellet refill reminder count"
       }
     },
     "switch": {
