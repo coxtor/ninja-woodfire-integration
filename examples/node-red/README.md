@@ -19,6 +19,13 @@ notification each:
 | `ninja_woodfire_prompt` | Display prompt (add / flip / get food) |
 | `ninja_woodfire_probe_alarm` | Probe alarm threshold reached (works independently of a probe target, even during a time-based cook) |
 
+Every event also carries a full status snapshot (`grill_state`, `phase`,
+`grill_temp`, `seconds_left`/`seconds_set`, `probe0_temp`/`probe1_temp` +
+their active targets) alongside its own specific fields. The notification
+function appends whatever of that the event's own text doesn't already say
+(grill temp, both probe temps/targets, remaining time) as an extra line, so a
+single notification shows the full picture without polling any entity.
+
 ## Import & setup
 
 1. Node-RED → ☰ → *Import* → paste the flow. Two languages are provided:

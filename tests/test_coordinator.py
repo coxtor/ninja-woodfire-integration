@@ -343,6 +343,60 @@ async def test_probe_halfway_measured_from_start_temp(hass, coordinator, events)
     assert events.count(EVENT_PROBE_TARGET_REACHED) == 1
 
 
+# ---------------------------------------------------------------- status snapshot
+# A consistent status snapshot (grill temp/state/phase, cook timer, both
+# probes) is attached to every lifecycle event, so a notification (e.g.
+# Node-RED) can show the full picture without separately polling entities.
+
+
+async def test_cook_started_carries_a_full_status_snapshot(hass, coordinator):
+    # temps.grill arrives in °F on the wire (from_wire converts it) - 356°F == 180°C.
+    state = mk_state(
+        cooking(left=900, total=1800, inputs={"temps": {"grill": 356}}),
+        {"state": {"state": "cooking"}},
+        probes={"probes": [probe(temp=40, setpoint=74), probe(temp=22, setpoint=0, active=0, name="probe1")]},
+    )
+    payloads = await _feed_with_payload(hass, coordinator, EVENT_COOK_STARTED, mk_state(), state)
+    data = payloads[-1]
+    assert data["grill_state"] == "cooking"
+    assert data["phase"] == "cooking"
+    assert data["grill_temp"] == 180
+    assert data["seconds_left"] == 900
+    assert data["seconds_set"] == 1800
+    assert data["probe0_temp"] == 40
+    assert data["probe0_target"] == 74
+    assert data["probe1_temp"] == 22
+    assert data["probe1_target"] == 0  # inactive probe - fixture's own mode.setpoint
+
+
+async def test_probe_target_reached_carries_the_status_snapshot_too(hass, coordinator):
+    def st(temp):
+        return mk_state(
+            cooking(inputs={"temps": {"grill": 392}}),  # 392F == 200C
+            probes={"probes": [probe(temp=temp, setpoint=74)]},
+        )
+
+    payloads = await _feed_with_payload(
+        hass, coordinator, EVENT_PROBE_TARGET_REACHED, mk_state(), st(40), st(74),
+    )
+    data = payloads[-1]
+    assert data["grill_temp"] == 200
+    assert data["grill_state"] == "cooking"
+
+
+async def test_probe_alarm_carries_the_status_snapshot_too(hass, coordinator, events):
+    coordinator.probe_alarm_temp[0] = 50
+    coordinator.probe_alarm_enabled[0] = True
+    state = mk_state(
+        cooking(inputs={"temps": {"grill": 410}}),  # 410F == 210C
+        probes={"probes": [probe(temp=55, active=0)]},
+    )
+    payloads = await _feed_with_payload(hass, coordinator, EVENT_PROBE_ALARM, mk_state(), state)
+    data = payloads[-1]
+    assert data["grill_temp"] == 210
+    assert data["probe0_temp"] == 55
+
+
 # ---------------------------------------------------------------- review follow-ups
 
 

@@ -55,7 +55,11 @@ Matching Lovelace card: [ninja-woodfire-card](https://github.com/coxtor/ninja-wo
 - **Diagnostics** — connection, backend, last report, Wi-Fi signal, poll health.
 - **Events** for automations: `cook_started`, `preheat_complete`,
   `cook_halftime`, `cook_done`, `probe_halfway`, `probe_target_reached`,
-  `probe_alarm`, `prompt` (all prefixed `ninja_woodfire_`).
+  `probe_alarm`, `prompt` (all prefixed `ninja_woodfire_`). Every event also
+  carries a full status snapshot (`grill_state`, `phase`, `grill_temp`,
+  `seconds_left`/`seconds_set`, `probe0_temp`/`probe1_temp` + their active
+  targets), so a single event has everything a notification needs without
+  separately polling entities — see [Node-RED notifications](#node-red-notifications).
 
 ## Install & set up
 
@@ -212,7 +216,12 @@ automation:
     action:
       - service: notify.mobile_app
         data:
-          message: "Probe 1 reached {{ trigger.event.data.target }}°C."
+          # Every event carries the full status snapshot too, not just its
+          # own fields - no need for a separate template sensor lookup.
+          message: >-
+            Probe 1 reached {{ trigger.event.data.target }}°C.
+            Grill is at {{ trigger.event.data.grill_temp }}°C,
+            {{ trigger.event.data.seconds_left // 60 }} min left.
 
   - alias: "Probe alarm"
     trigger:
