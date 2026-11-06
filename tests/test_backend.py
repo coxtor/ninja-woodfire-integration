@@ -1374,6 +1374,42 @@ async def test_a_probe_target_reached_shows_in_the_probe_state(hass, entry):
 
 
 @pytest.mark.asyncio
+async def test_an_active_probe_reports_live_progress_toward_its_target(hass, entry):
+    # Bug found live 2026-11-06: the BLE path built ProbeInfo without ever
+    # setting progress, leaving it stuck at the dataclass default (0) even
+    # as the probe climbed toward its target. The firmware's own progress
+    # field (observed via the app) tracks round(100 * temp / target) almost
+    # exactly - e.g. 30/42C -> 71-72, 40/42C -> 95 - so compute it the same
+    # way for the local BLE transport, which has no such field of its own.
+    import time as _time
+
+    c = await _beacon_coordinator(hass, entry)
+    c.cook_setting_probe_enabled[0] = True
+    c.cook_setting_probe_setpoint[0] = 42
+    c.beacon_probes = [30.0, None]
+    c.beacon_phase = "cooking"
+    c._beacon_at = _time.monotonic()
+    c._merge_beacon(c.data)
+    assert c.data.probes.probes[0].progress == 71
+
+    c.beacon_probes = [42.0, None]
+    c._merge_beacon(c.data)
+    assert c.data.probes.probes[0].progress == 100
+
+
+@pytest.mark.asyncio
+async def test_a_disabled_probes_progress_stays_zero(hass, entry):
+    import time as _time
+
+    c = await _beacon_coordinator(hass, entry)
+    c.beacon_probes = [30.0, None]
+    c.beacon_phase = "cooking"
+    c._beacon_at = _time.monotonic()
+    c._merge_beacon(c.data)
+    assert c.data.probes.probes[0].progress == 0
+
+
+@pytest.mark.asyncio
 async def test_cookstate_pause_shows_as_get_food_without_waiting_for_a_prompt(hass, entry):
     # Live-validated 2026-11-06: CookStatePause (beacon_phase == "get_food",
     # see ble_beacon.py) fired a couple seconds before the @98 prompt field,
@@ -1417,6 +1453,36 @@ async def test_get_food_persists_until_a_lid_open_close_cycle(hass, entry):
     assert c.data.grill.state == "get_food"
 
     # ...then closes: the cycle completes, now it's free to fall back to idle.
+    c.beacon_lid = False
+    c._merge_beacon(c.data)
+    assert c.data.grill.state == "idle"
+
+
+@pytest.mark.asyncio
+async def test_get_food_releases_on_lid_cycle_even_if_the_signal_never_clears(hass, entry):
+    # Bug found live 2026-11-06: unlike the @98 prompt, CookStatePause
+    # ("get_food" from phase 5) does NOT clear on its own - the grill kept
+    # reporting it every single cycle straight through a full lid
+    # open-close. The old code only checked the lid once fresh_signal
+    # stopped being "get_food", which here never happened - the hold stuck
+    # forever even after the user physically did the lid cycle.
+    import time as _time
+
+    c = await _beacon_coordinator(hass, entry)
+    c._cook_seen = True
+    c.beacon_phase = "get_food"
+    c.beacon_lid = False
+    c._beacon_at = _time.monotonic()
+    c._merge_beacon(c.data)
+    assert c.data.grill.state == "get_food"
+
+    # Lid opens, beacon still says get_food the whole time.
+    c.beacon_lid = True
+    c._merge_beacon(c.data)
+    assert c.data.grill.state == "get_food"
+
+    # ...and closes again - still get_food in the beacon, but the lid cycle
+    # itself is what releases the hold.
     c.beacon_lid = False
     c._merge_beacon(c.data)
     assert c.data.grill.state == "idle"

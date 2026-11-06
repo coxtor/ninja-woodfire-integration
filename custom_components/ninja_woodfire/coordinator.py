@@ -441,25 +441,32 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
         Per the user (matches the real grill/app): the firmware doesn't
         return to idle on its own once a cook finishes - it stays there
         until the lid is opened and closed again (or stopped explicitly).
-        But the beacon's own signals for "done"/"get_food" (the @98 prompt,
-        or phase 5 for a probe cook) are transient and can clear on their
-        own well before that. `fresh_signal` is this cycle's beacon-derived
-        reading alone ("done"/"get_food"/"active"/None) - not state.grill.state,
-        which can be a stale carry-over from a prior merge and would make a
-        held "done"/"get_food" look self-renewing forever, never reaching the
-        lid-tracking branch below. Exception: if the lid was already open
-        when the hold started (e.g. an open-grill mode), closing it once is
-        enough - there's nothing to "open" that hasn't already happened.
+        `fresh_signal` is this cycle's beacon-derived reading alone
+        ("done"/"get_food"/"active"/None) - not state.grill.state, which can
+        be a stale carry-over from a prior merge.
+
+        Live-observed 2026-11-06 (bug fix): unlike the @98 prompt field,
+        which does clear on its own, the phase-5/CookStatePause "get_food"
+        signal this is mostly fed from does NOT - it kept reporting
+        "get_food" every single cycle straight through a full lid open-close
+        cycle. The lid-tracking check below must therefore run on *every*
+        cycle the hold is active, not only once fresh_signal stops being
+        "done"/"get_food" - an early return there made the lid cycle (and
+        thus the whole release path) unreachable in practice. Exception: if
+        the lid was already open when the hold started (e.g. an open-grill
+        mode), closing it once is enough - there's nothing to "open" that
+        hasn't already happened.
         """
-        if fresh_signal in ("done", "get_food"):
-            if self._post_cook_hold is None:
-                self._hold_seen_open = bool(state.grill.lid_open)
-            self._post_cook_hold = fresh_signal
-            state.grill.state = fresh_signal
-            return
         if fresh_signal == "active":
             self._post_cook_hold = None
             return
+        if fresh_signal in ("done", "get_food") and self._post_cook_hold is None:
+            self._hold_seen_open = bool(state.grill.lid_open)
+            self._post_cook_hold = fresh_signal
+        elif fresh_signal in ("done", "get_food"):
+            # Keep the hold's own label current (e.g. get_food -> done)
+            # without resetting the lid-open tracking already in progress.
+            self._post_cook_hold = fresh_signal
         if self._post_cook_hold is None:
             return
         if state.grill.lid_open:
@@ -693,11 +700,22 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
             plugged = temp is not None
             enabled = self.cook_setting_probe_enabled[idx]
             target = self.cook_setting_probe_setpoint[idx] if enabled else None
+            # Matches the firmware's own reporting, confirmed live
+            # (2026-11-06): the app's ProbeStatus.progress tracked
+            # round(100 * temp / target) almost exactly (e.g. 30/42 -> 71-72,
+            # 40/42 -> 95). The BLE beacon has no separate progress field to
+            # read, so this is computed locally instead of left at 0.
+            progress = (
+                max(0, min(100, round(100 * (temp or 0.0) / target)))
+                if target and plugged and enabled
+                else 0
+            )
             probes.append(ProbeInfo(
                 name=f"probe{idx}",
                 plugged_in=plugged,
                 active=plugged and enabled,
                 temp=temp or 0.0,
+                progress=progress,
                 target=ProbeMode(mode="manual", setpoint=target) if target else ProbeMode(),
                 state=self.beacon_probe_states[idx] or "none",
             ))
