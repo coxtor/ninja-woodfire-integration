@@ -31,6 +31,7 @@ from ._lib.capabilities import (
     grill_level,
 )
 from ._lib.models import CombinedState, CookState, GrillState, ProbeInfo, ProbeMode, ProbeState
+from ._lib.probe_presets import PROBE_FOOD_MANUAL, get_food_preset
 
 from .const import (
     ACTIVE_STATES,
@@ -168,6 +169,11 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
         self.cook_setting_skip_preheat: bool = False
         self.cook_setting_probe_enabled: list[bool] = [False, False]
         self.cook_setting_probe_setpoint: list[int] = [60, 60]
+        # Food preset UI state only - resolved to a plain setpoint before
+        # being sent (see async_set_probe_food). Never reported live: the
+        # firmware doesn't echo which preset produced a target.
+        self.cook_setting_probe_food: list[str] = [PROBE_FOOD_MANUAL, PROBE_FOOD_MANUAL]
+        self.cook_setting_probe_doneness_index: list[int] = [0, 0]
         # The firmware reports grill mode as °C and resets "seconds set" to
         # the remaining time on every re-issue. Remember what we sent so the
         # live state can be mapped back to what the user chose.
@@ -907,6 +913,17 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
             return live["setpoint"]
         return self.cook_setting_probe_setpoint[idx]
 
+    def live_or_staged_probe_food(self, idx: int) -> str:
+        """Which preset (or "Manual") the probe target number came from.
+
+        UI-only: never reported live, since the firmware doesn't echo a
+        preset selection back - only the plain °C target it produced.
+        """
+        return self.cook_setting_probe_food[idx]
+
+    def live_or_staged_probe_doneness_index(self, idx: int) -> int:
+        return self.cook_setting_probe_doneness_index[idx]
+
     # ------------------------------------------------------------------ commands
 
     @staticmethod
@@ -1382,6 +1399,37 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
                 live, probes={idx: payload}, skip_preheat=not is_preheating(live)
             )
         await self._burst_refresh()
+
+    async def async_set_probe_food(self, idx: int, food: str) -> None:
+        """Select a protein preset for a probe target, or "Manual" to free-type.
+
+        Cosmetic/UI-side only: the grill's BLE protocol has no concept of a
+        preset (see `ble_proto.py`), so this just resolves the preset's
+        current doneness level to a plain °C target and sends it through the
+        existing manual-setpoint path - same effect, no protocol change.
+        Selecting "Manual" only remembers the choice; it does not touch the
+        setpoint, so whatever was last sent (preset or hand-typed) stays.
+        """
+        self.cook_setting_probe_food[idx] = food
+        preset = get_food_preset(food)
+        if preset is None:
+            self.async_update_listeners()
+            return
+        level = preset.levels[min(
+            self.cook_setting_probe_doneness_index[idx], len(preset.levels) - 1
+        )]
+        await self.async_set_probe(idx, setpoint=level.temp_c)
+
+    async def async_set_probe_doneness(self, idx: int, level_index: int) -> None:
+        """Pick a doneness level within the probe's currently selected preset."""
+        preset = get_food_preset(self.cook_setting_probe_food[idx])
+        if preset is None:
+            self.cook_setting_probe_doneness_index[idx] = level_index
+            self.async_update_listeners()
+            return
+        level_index = max(0, min(level_index, len(preset.levels) - 1))
+        self.cook_setting_probe_doneness_index[idx] = level_index
+        await self.async_set_probe(idx, setpoint=preset.levels[level_index].temp_c)
 
     async def _reissue(
         self,

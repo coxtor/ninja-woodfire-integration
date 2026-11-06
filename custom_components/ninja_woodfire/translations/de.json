@@ -193,6 +193,18 @@
     "select": {
       "cook_mode": {
         "name": "Kochmodus"
+      },
+      "probe0_food": {
+        "name": "Sonde 1 Lebensmittel"
+      },
+      "probe0_doneness": {
+        "name": "Sonde 1 Garpunkt"
+      },
+      "probe1_food": {
+        "name": "Sonde 2 Lebensmittel"
+      },
+      "probe1_doneness": {
+        "name": "Sonde 2 Garpunkt"
       }
     },
     "number": {

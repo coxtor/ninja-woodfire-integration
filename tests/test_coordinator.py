@@ -127,6 +127,46 @@ async def test_probe_change_while_idle_only_stages(coordinator):
     assert coordinator.live_or_staged_probe_setpoint(1) == 65
 
 
+# --------------------------------------------------------- probe food presets
+
+
+async def test_selecting_a_food_preset_sends_its_default_temp(coordinator):
+    coordinator.data = mk_state(cooking(), probes={"probes": [probe(setpoint=60)]})
+    await coordinator.async_set_probe_food(0, "Beef")
+    assert coordinator.live_or_staged_probe_food(0) == "Beef"
+    assert sent(coordinator)["probe_0"] == {"mode": "manual", "setpoint": 42}  # Rare 1
+
+
+async def test_changing_doneness_resends_the_new_level_temp(coordinator):
+    coordinator.data = mk_state(cooking(), probes={"probes": [probe(setpoint=60)]})
+    await coordinator.async_set_probe_food(0, "Beef")
+    await coordinator.async_set_probe_doneness(0, 2)  # "M. Rare 3"
+    assert coordinator.live_or_staged_probe_doneness_index(0) == 2
+    assert sent(coordinator)["probe_0"] == {"mode": "manual", "setpoint": 47}
+
+
+async def test_manual_food_does_not_touch_the_setpoint(coordinator):
+    coordinator.data = mk_state(cooking(), probes={"probes": [probe(setpoint=60)]})
+    await coordinator.async_set_probe_food(0, "Manual")
+    assert coordinator.live_or_staged_probe_food(0) == "Manual"
+    assert coordinator.client.start_cook.await_count == 0
+
+
+async def test_food_preset_while_idle_only_stages(coordinator):
+    coordinator.data = mk_state()
+    await coordinator.async_set_probe_food(1, "Lamb")
+    assert coordinator.client.start_cook.await_count == 0
+    assert coordinator.live_or_staged_probe_food(1) == "Lamb"
+    assert coordinator.live_or_staged_probe_setpoint(1) == 55  # Lamb's "Rare" default
+
+
+async def test_doneness_index_past_the_presets_range_clamps(coordinator):
+    coordinator.data = mk_state(cooking(), probes={"probes": [probe(setpoint=60)]})
+    await coordinator.async_set_probe_food(0, "Chicken")  # only 1 level
+    await coordinator.async_set_probe_doneness(0, 5)
+    assert sent(coordinator)["probe_0"] == {"mode": "manual", "setpoint": 74}
+
+
 # ---------------------------------------------------------------- polling
 
 

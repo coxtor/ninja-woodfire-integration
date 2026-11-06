@@ -232,6 +232,7 @@ async def test_number_set_while_offline_only_stages(coordinator):
 STAYS_AVAILABLE = {
     "cook_duration", "cook_temp", "probe0_target_temp", "probe1_target_temp",
     "cook_mode", "cook_smoke", "cook_skip_preheat", "probe0_enabled", "probe1_enabled",
+    "probe0_food", "probe1_food",
     "firmware_version", "oem_model", "dsn", "stop_cook", "cloud_connected", "cloud_backend",
     # last_report/last_successful_poll are disabled by default (they'd change
     # on every poll and spam the logbook), so they're absent, not just stale.

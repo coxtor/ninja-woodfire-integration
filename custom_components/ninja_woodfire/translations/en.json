@@ -193,6 +193,18 @@
     "select": {
       "cook_mode": {
         "name": "Cook mode"
+      },
+      "probe0_food": {
+        "name": "Probe 1 food"
+      },
+      "probe0_doneness": {
+        "name": "Probe 1 doneness"
+      },
+      "probe1_food": {
+        "name": "Probe 2 food"
+      },
+      "probe1_doneness": {
+        "name": "Probe 2 doneness"
       }
     },
     "number": {
