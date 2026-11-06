@@ -1633,6 +1633,31 @@ async def test_a_probe_becoming_active_clears_a_timer_from_before(hass, entry):
 
 
 @pytest.mark.asyncio
+async def test_timer_stays_suppressed_after_the_firmware_auto_disables_the_probe(hass, entry):
+    # Live-observed 2026-11-06: once the probe cook finished ("Fertig" in the
+    # app), the firmware cleared the probe's own enable flag on its own -
+    # probe_driving alone would go False right then and let the stale beacon
+    # "600" reading straight back through for the rest of the get_food/
+    # resting stretch while the user is still looking at the grill.
+    import time as _time
+
+    c = await _beacon_coordinator(hass, entry)
+    c.cook_setting_probe_enabled[1] = True
+    c.beacon_phase = "cooking"
+    c.beacon_remaining = c.beacon_total = None
+    c._beacon_at = _time.monotonic()
+    c._merge_beacon(c.data)
+    assert c.data.grill.seconds_left is None
+
+    c.cook_setting_probe_enabled[1] = False  # the firmware's own auto-reset
+    c.beacon_phase = "get_food"
+    c.beacon_remaining, c.beacon_total = 600, None  # the stale reading is still there
+    c._merge_beacon(c.data)
+    g = c.data.grill
+    assert (g.seconds_set, g.seconds_left, g.timer_estimated) == (None, None, False)
+
+
+@pytest.mark.asyncio
 async def test_a_plain_duration_cook_without_any_probe_still_estimates(hass, entry):
     import time as _time
 

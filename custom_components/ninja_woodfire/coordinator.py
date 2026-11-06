@@ -234,6 +234,11 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
         # usually absent): when cooking started, counting down the configured
         # duration. None while not cooking.
         self._local_cook_end: datetime | None = None
+        # Sticky for the whole cook once any probe drives it - see
+        # _merge_beacon's timerless_probe_cook for why this outlives the
+        # probe's own enable flag (which the firmware clears on its own once
+        # the cook is done).
+        self._probe_drove_this_cook = False
         # Skip-preheat toggle: the firmware ignores skip=1 on the initial cook;
         # it only skips when re-sent during preheat (what the Skip button does).
         # So when the toggle is on we auto-fire that skip once preheat is seen.
@@ -561,7 +566,15 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
         # latter's "live" branch reads state.probes, which this method
         # itself builds further down - too late to consult here.
         probe_driving = any(self.cook_setting_probe_enabled[: len(self.beacon_probes)])
-        timerless_probe_cook = probe_driving
+        if probe_driving:
+            self._probe_drove_this_cook = True
+        # Live-observed 2026-11-06: the firmware itself clears the probe's
+        # enable flag once the cook is fully done (the app showed "Fertig"
+        # right as this happened) - probe_driving alone would then go False
+        # and let the stale beacon reading straight back through for the
+        # rest of this idle/get_food/resting stretch. _probe_drove_this_cook
+        # persists until the cook actually ends (below), so it doesn't.
+        timerless_probe_cook = probe_driving or self._probe_drove_this_cook
         if timerless_probe_cook:
             # Live-observed 2026-11-06: the beacon's "remaining" field isn't
             # just absent for a probe-driven cook, it can hold a static
@@ -606,6 +619,7 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
             # or flip prompt would wipe the running timer and restart it from
             # the full duration once cooking resumes.
             self._local_cook_end = None
+            self._probe_drove_this_cook = False
             if grill.timer_estimated or grill.seconds_left is not None:
                 # ...and drop the timer values, which this in-place state would
                 # otherwise keep showing after the cook is over.
