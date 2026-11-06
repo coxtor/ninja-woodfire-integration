@@ -235,6 +235,12 @@
       },
       "wake": {
         "name": "Aufwecken"
+      },
+      "extend_cook_1min": {
+        "name": "+1 Min"
+      },
+      "extend_cook_5min": {
+        "name": "+5 Min"
       }
     }
   },
@@ -254,6 +260,10 @@
         "duration": {
           "name": "Dauer",
           "description": "Gesamte Gardauer in Minuten (inklusive der bereits vergangenen Zeit)."
+        },
+        "add_minutes": {
+          "name": "Minuten addieren",
+          "description": "Addiert zur aktuellen Gesamtdauer, statt sie zu ersetzen. Entweder dieses Feld oder Dauer verwenden, nicht beides."
         },
         "smoke": {
           "name": "Woodfire-Aroma",

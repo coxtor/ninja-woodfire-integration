@@ -22,6 +22,14 @@ configure_cook:
           max: 1440
           unit_of_measurement: min
           mode: box
+    add_minutes:
+      example: 5
+      selector:
+        number:
+          min: 1
+          max: 1440
+          unit_of_measurement: min
+          mode: box
     smoke:
       selector:
         boolean:

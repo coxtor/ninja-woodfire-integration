@@ -169,6 +169,50 @@ async def test_preheat_complete_fires_once(hass, coordinator, events):
     assert events.count(EVENT_COOK_STARTED) == 1
 
 
+async def _feed_with_payload(hass, coordinator, event_type, *states, tick_s=0, freezer=None):
+    """Like _feed, but returns the last event's data dict instead of just counting."""
+    payloads = []
+    hass.bus.async_listen(event_type, lambda e: payloads.append(e.data))
+    for i, s in enumerate(states):
+        if freezer is not None and i > 0:
+            freezer.tick(tick_s)
+        coordinator._emit_lifecycle_events(s)
+    await hass.async_block_till_done()
+    return payloads
+
+
+async def test_preheat_complete_flags_a_hardware_skip_as_skipped(hass, coordinator, freezer):
+    # Live data 2026-11-06: a genuine preheat/ignition ran 262-590s; a skip via
+    # the grill's own Start-button-held gesture ran 2-10s. is_prehaet_skipped
+    # only reflects an app/HA-issued skip, not this hardware one - so the
+    # coordinator times the phase itself instead of trusting that flag.
+    base = dict(left=1800, total=1800)
+    payloads = await _feed_with_payload(
+        hass, coordinator, EVENT_PREHEAT_COMPLETE,
+        mk_state(),
+        mk_state(cooking(state="preheat", **base), {"state": {"state": "preheat"}}),
+        mk_state(cooking(state="cooking", **base), {"state": {"state": "cooking"}}),
+        tick_s=5,  # a 5 s preheat is only possible if it was skipped
+        freezer=freezer,
+    )
+    assert payloads[-1]["skipped"] is True
+
+
+async def test_preheat_complete_is_not_flagged_skipped_when_it_ran_its_course(
+    hass, coordinator, freezer
+):
+    base = dict(left=1800, total=1800)
+    payloads = await _feed_with_payload(
+        hass, coordinator, EVENT_PREHEAT_COMPLETE,
+        mk_state(),
+        mk_state(cooking(state="preheat", **base), {"state": {"state": "preheat"}}),
+        mk_state(cooking(state="cooking", **base), {"state": {"state": "cooking"}}),
+        tick_s=300,  # a real preheat observed live: 262-590 s
+        freezer=freezer,
+    )
+    assert payloads[-1]["skipped"] is False
+
+
 async def test_unknown_state_does_not_refire(hass, coordinator, events):
     from custom_components.ninja_woodfire._lib.models import CombinedState
 

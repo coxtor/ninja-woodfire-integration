@@ -67,6 +67,9 @@ CONFIGURE_COOK_SCHEMA = vol.Schema({
     vol.Optional("mode"): vol.In(COOK_MODES),
     vol.Optional("temp"): vol.All(vol.Coerce(int), vol.Range(min=1, max=300)),
     vol.Optional("duration"): vol.All(vol.Coerce(int), vol.Range(min=1, max=1440)),  # minutes
+    # Adds to the current total instead of replacing it; mutually exclusive
+    # with `duration` (ambiguous together: which one wins?).
+    vol.Optional("add_minutes"): vol.All(vol.Coerce(int), vol.Range(min=1, max=1440)),
     vol.Optional("smoke"): cv.boolean,
     vol.Optional("skip_preheat"): cv.boolean,
     vol.Optional("probe_0_enabled"): cv.boolean,
@@ -219,11 +222,20 @@ def _register_services(hass: HomeAssistant) -> None:
             if cfg:
                 probes[idx] = cfg
         duration = data.get("duration")
+        add_minutes = data.get("add_minutes")
+        if duration is not None and add_minutes is not None:
+            raise ServiceValidationError("Use either duration or add_minutes, not both")
         for coordinator in _coordinators(hass, data["device_id"]):
+            if duration is not None:
+                seconds = int(duration) * 60
+            elif add_minutes is not None:
+                seconds = coordinator.live_or_staged_seconds + int(add_minutes) * 60
+            else:
+                seconds = None
             await coordinator.async_configure_cook(
                 mode=data.get("mode"),
                 temp=data.get("temp"),
-                seconds=None if duration is None else int(duration) * 60,
+                seconds=seconds,
                 smoke=data.get("smoke"),
                 skip_preheat=data.get("skip_preheat"),
                 probes=probes or None,

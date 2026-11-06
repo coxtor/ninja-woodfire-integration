@@ -46,11 +46,48 @@ _PROBE1 = (88, 10)   # probe 1 temperature, raw °C  (0 == not plugged in)
 _LID = (48, 1)       # 1 == lid open, 0 == lid closed
 _PHASE = (25, 5)     # cook phase
 _PROMPT = (98, 6)    # user prompt shown on the grill display
+_REMAINING = (51, 17)  # seconds left on the cook timer (1 Hz countdown while cooking)
+_TOTAL = (104, 16)     # the cook's set duration in seconds (== remaining during preheat)
+
+# The firmware's own UI state machine ("Uim"). The grill keeps advertising
+# this beacon even with its display fully off (UimPowerOff) - it only stops
+# advertising while a GATT client holds a connection. Without this the
+# powered-off and merely-idle-and-responsive cases are indistinguishable from
+# the advertisement alone (both carry no cook phase), so a sleeping grill
+# looked like a plain idle one and the card offered a Start the firmware
+# would silently ignore. Live-validated 2026-11-06 over 600+ real frames:
+# 3 == UimPowerOff, 4 == UimIdle, 7 == UimCookActive. A later test toggling
+# the grill's own physical power button (only reachable that way, never via a
+# remote Stop/Start/Wake) added 5 == UimHello (brief post-power-on boot step)
+# and 9 == UimPoweringOff (brief pre-shutdown step): PowerOff -> Hello -> Idle
+# -> PoweringOff -> PowerOff. PoweringOff is treated as "powered off" too -
+# the grill is already on its way down and a Start would be as useless as
+# during PowerOff itself, so the card should offer Wake right away rather
+# than waiting for the sequence to finish. Hello is the opposite direction
+# (coming up) and is deliberately not flagged. 6/8 were never observed.
+_UIM = (16, 5)
+_UIM_POWERED_OFF = 3
+_UIM_POWERING_OFF = 9
 
 # Mapped against a full cook captured over the air (phase/prompt confirmed
 # against the grill display): preheat->add food->cooking->flip->done->get food.
-_PHASE_MAP = {2: "ignition", 3: "preheat", 4: "cooking"}  # 0 == idle/done; off == no beacon
+_PHASE_MAP = {2: "ignition", 3: "preheat", 4: "cooking", 8: "lid_open"}  # 0 == idle/done; off == no beacon
+# 8 (live-validated 2026-11-06): the lid was opened during a wood-fire cook
+# (firmware's own CookStateLidOpen). Re-closing it re-runs ignition (phase
+# goes back to 2) rather than resuming straight into cooking - the grill
+# re-lights, it doesn't just pick up where it left off. Duration/setpoint are
+# untouched. The coordinator already derives the same "lid_open" display
+# state from the lid bit directly, so this mapping is for completeness only.
 _PROMPT_MAP = {1: "addfood", 4: "flipfood", 6: "done", 7: "getfood"}  # 0 == none
+
+# Every frame this layout applies to carries 13 in its second byte (the
+# firmware branches on it); other values are different layouts or noise.
+_LAYOUT = (8, 8)
+_LAYOUT_ID = 13
+# The grill takes durations in whole minutes and up to 12 h. A "total" that is
+# neither is a differently-used field (with a meat probe active the firmware
+# repurposes those bits), so only the remaining time is trusted from such a frame.
+_TIMER_MAX_S = 12 * 3600
 
 # A 10-bit probe field reading its maximum looks like an open circuit / no
 # probe; anything above a sane meat range is treated as "not connected".
@@ -100,6 +137,21 @@ def _probe_c(raw: int) -> float | None:
     return float(raw)
 
 
+def _timer(plain: bytes) -> tuple[int | None, int | None]:
+    """(remaining, total) cook-timer seconds; None for whichever isn't a timer."""
+    if _bitread(plain, *_LAYOUT) != _LAYOUT_ID:
+        return None, None
+    remaining = _bitread(plain, *_REMAINING)
+    total = _bitread(plain, *_TOTAL)
+    if not 0 < remaining <= _TIMER_MAX_S:
+        return None, None
+    if not 0 < total <= _TIMER_MAX_S or total % 60:
+        return remaining, None
+    if remaining > total:
+        return None, None
+    return remaining, total
+
+
 def _first_mfg_ad(raw: bytes) -> bytes | None:
     """Return the data of the first company-0x0C4F manufacturer AD in a raw adv."""
     i = 0
@@ -145,10 +197,14 @@ def parse_beacon(mfg: bytes | None, key: bytes, iv: bytes) -> dict | None:
     if not mfg or len(mfg) < _MFG1_LEN:
         return None
     plain = _decrypt_segment(bytes(mfg[:_MFG1_LEN]), key, iv)
+    remaining, total = _timer(plain)
     return {
         "probe0_temp": _probe_c(_bitread(plain, *_PROBE0)),
         "probe1_temp": _probe_c(_bitread(plain, *_PROBE1)),
         "lid_open": bool(_bitread(plain, *_LID)),
         "phase": _PHASE_MAP.get(_bitread(plain, *_PHASE)),
         "prompt": _PROMPT_MAP.get(_bitread(plain, *_PROMPT)),
+        "remaining_s": remaining,
+        "total_s": total,
+        "powered_off": _bitread(plain, *_UIM) in (_UIM_POWERED_OFF, _UIM_POWERING_OFF),
     }

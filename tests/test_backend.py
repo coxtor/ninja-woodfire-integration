@@ -920,6 +920,33 @@ async def test_fresh_idle_beacon_pins_state_to_idle(hass, entry):
 
 
 @pytest.mark.asyncio
+async def test_a_live_powered_off_beacon_shows_wake_not_a_dead_start(hass, entry):
+    # Live BLE test (2026-11-06): the grill keeps advertising a beacon even
+    # with its display fully off (Uim == UimPowerOff) - it only stops
+    # advertising while a GATT client is connected. The old staleness-based
+    # "powered_off" detection (test_asleep_grill_shows_powered_off_not_idle)
+    # never fires here because the beacon never goes stale; without decoding
+    # the Uim bit itself this collapsed into the generic "idle" branch and
+    # the card offered a Start that the firmware would just ignore.
+    import time as _time
+    from unittest.mock import AsyncMock
+    from custom_components.ninja_woodfire.coordinator import NinjaWoodfireCoordinator
+    from custom_components.ninja_woodfire._lib.capabilities import WOODFIRE_PRO_XL
+
+    ble = AsyncMock()
+    ble.get_combined_state.return_value = mk_state(grill={"state": "unknown"})
+    c = NinjaWoodfireCoordinator(hass, entry, None, DSN, WOODFIRE_PRO_XL, 0, ble=ble,
+                                 beacon_slot=_BEACON_SLOT)
+    await c.async_refresh()
+
+    c.beacon_phase = None
+    c.beacon_powered_off = True
+    c._beacon_at = _time.monotonic()
+    c._merge_beacon(c.data)
+    assert c.data.grill.state == "powered_off"
+
+
+@pytest.mark.asyncio
 async def test_asleep_mid_cook_still_fires_cook_done(hass, entry):
     # Regression: _merge_beacon can report grill_state "powered_off" (BLE connect
     # succeeded but no beacon/0x0f, e.g. grill went to standby mid-cook) while
@@ -1181,6 +1208,35 @@ async def test_a_stale_beacon_stops_presenting_its_readings_as_current(hass, ent
 
 
 @pytest.mark.asyncio
+async def test_a_dropped_beacon_freezes_the_grill_timer_instead_of_faking_it(hass, entry):
+    # The vendor app was observed (live BLE test, 2026-11-06) inventing a
+    # locally-decremented countdown for several minutes while its own BLE
+    # scan was silently throttled (display auto-lock) - showing a timer that
+    # had nothing to do with the grill's real state. Our timer must never do
+    # that: once the beacon goes stale, the last grill-reported remaining
+    # time is frozen, not extrapolated further and not blanked.
+    import time as _time
+
+    c, _ble = _local(hass, entry)
+    await c.async_refresh()
+    c._cook_seen = True
+    c.beacon_phase = "cooking"
+    c.beacon_remaining = 54
+    c.beacon_total = 300
+    c._beacon_at = _time.monotonic()
+    c._merge_beacon(c.data)
+    assert c.data.grill.seconds_left == 54
+
+    # Radio silence for several minutes (longer than any plausible scan
+    # throttle) - beacon_remaining still holds the last real reading because
+    # update_beacon() only ever changes it on an actual new frame.
+    c._beacon_at = _time.monotonic() - 999
+    c._merge_beacon(c.data)
+    assert c.data.grill.seconds_left == 54
+    assert c.data.grill.timer_estimated is False
+
+
+@pytest.mark.asyncio
 async def test_the_estimated_timer_is_refreshed_on_every_merge(hass, entry, freezer):
     # I-08: the estimate is recomputed each merge; it must not freeze at the
     # value written into the state the first time round.
@@ -1230,3 +1286,171 @@ async def test_a_live_duration_change_moves_the_estimated_end(hass, entry, freez
 
     await c.async_modify_cook(temp=2)
     assert calls[-1]["seconds"] == sent      # the new remainder, not the old one
+
+
+@pytest.mark.asyncio
+async def test_extend_cook_adds_minutes_to_the_total_not_the_remainder(hass, entry, freezer):
+    # +N min must grow the *total* planned duration (matching what the number
+    # entity shows), so two "+1 min" presses in a row add up to +2 min total -
+    # not +1 min of whatever happens to be left when each is pressed.
+    import time as _time
+
+    c, ble = _local(hass, entry)
+    await c.async_refresh()
+    c.cook_setting_seconds = 600
+    c.beacon_phase = "cooking"
+    c._beacon_at = _time.monotonic()
+    c._merge_beacon(c.data)
+
+    freezer.tick(120)
+    c._beacon_at = _time.monotonic()
+    c._merge_beacon(c.data)
+    assert c.data.grill.seconds_left == 480
+
+    calls = []
+    ble.start_cook.side_effect = lambda dsn, **kw: calls.append(kw)
+    await c.async_extend_cook(2)
+    # 600 s total + 120 s extension, 120 s already elapsed -> 600 s to send.
+    assert abs(calls[-1]["seconds"] - 600) <= 1
+    assert abs(c.cook_setting_seconds - 720) <= 1
+
+
+@pytest.mark.asyncio
+async def test_extend_cook_while_idle_just_stages_the_longer_duration(hass, entry):
+    c, ble = _local(hass, entry)
+    await c.async_refresh()
+    c.cook_setting_seconds = 600
+
+    await c.async_extend_cook(5)
+    assert c.cook_setting_seconds == 900
+    ble.start_cook.assert_not_called()
+
+
+# --- real cook timer from the beacon (replaces the local estimate) ----------
+
+async def _beacon_coordinator(hass, entry):
+    from unittest.mock import AsyncMock
+    from custom_components.ninja_woodfire.coordinator import NinjaWoodfireCoordinator
+    from custom_components.ninja_woodfire._lib.capabilities import WOODFIRE_PRO_XL
+
+    ble = AsyncMock()
+    ble.get_combined_state.return_value = mk_state()
+    c = NinjaWoodfireCoordinator(hass, entry, None, DSN, WOODFIRE_PRO_XL, 0, ble=ble,
+                                 beacon_slot=_BEACON_SLOT)
+    await c.async_refresh()
+    return c
+
+
+@pytest.mark.asyncio
+async def test_update_beacon_reads_the_grills_own_timer(hass, entry):
+    from .test_ble_beacon import _frame
+
+    c = await _beacon_coordinator(hass, entry)
+    c.update_beacon(_frame(remaining=1234, total=1800, phase=4))
+    assert (c.beacon_remaining, c.beacon_total) == (1234, 1800)
+    c.update_beacon(_frame())  # idle: no timer
+    assert (c.beacon_remaining, c.beacon_total) == (None, None)
+
+
+@pytest.mark.asyncio
+async def test_beacon_timer_wins_over_the_local_estimate(hass, entry):
+    # A cook started at the grill itself: the staged HA settings (600 s) have
+    # nothing to do with it, the grill says 1800 s with 1234 s left.
+    import time as _time
+    from homeassistant.util import dt as dt_util
+
+    c = await _beacon_coordinator(hass, entry)
+    c.cook_setting_seconds = 600
+    c.beacon_phase = "cooking"
+    c.beacon_remaining, c.beacon_total = 1234, 1800
+    c._beacon_at = _time.monotonic()
+    c._merge_beacon(c.data)
+    g = c.data.grill
+    assert (g.seconds_left, g.seconds_set, g.timer_estimated) == (1234, 1800, False)
+    assert abs(g.end_time_utc - (dt_util.utcnow().timestamp() + 1234)) < 3
+    assert c._local_cook_end is None
+
+
+@pytest.mark.asyncio
+async def test_beacon_timer_during_preheat_is_the_planned_duration(hass, entry):
+    import time as _time
+
+    c = await _beacon_coordinator(hass, entry)
+    c.beacon_phase = "preheat"
+    c.beacon_remaining, c.beacon_total = 1800, 1800
+    c._beacon_at = _time.monotonic()
+    c._merge_beacon(c.data)
+    g = c.data.grill
+    assert (g.seconds_set, g.seconds_left) == (1800, 1800)
+    assert g.end_time_utc is None  # not counting down yet
+
+
+@pytest.mark.asyncio
+async def test_without_a_beacon_timer_the_local_estimate_still_runs(hass, entry):
+    import time as _time
+
+    c = await _beacon_coordinator(hass, entry)
+    c.cook_setting_seconds = 900
+    c.beacon_phase = "cooking"
+    c.beacon_remaining = c.beacon_total = None
+    c._beacon_at = _time.monotonic()
+    c._merge_beacon(c.data)
+    g = c.data.grill
+    assert g.seconds_set == 900 and g.timer_estimated is True
+
+
+@pytest.mark.asyncio
+async def test_a_stale_beacon_timer_does_not_survive_a_stop(hass, entry):
+    import time as _time
+
+    c = await _beacon_coordinator(hass, entry)
+    c.beacon_phase = "cooking"
+    c.beacon_remaining, c.beacon_total = 500, 600
+    c._beacon_at = _time.monotonic()
+    c._merge_beacon(c.data)
+    c._burst_refresh = AsyncMock()
+    await c.async_stop_cook()
+    c._merge_beacon(c.data)  # the beacon lags: still says cooking, 500 s left
+    assert c.data.grill.state == "idle"
+    assert c.data.grill.seconds_left in (None, 0)
+
+
+@pytest.mark.asyncio
+async def test_beacon_remaining_without_a_total_still_beats_the_estimate(hass, entry):
+    # With a meat probe active the grill's "total" bits are repurposed; the
+    # remaining time is still the real one.
+    import time as _time
+
+    c = await _beacon_coordinator(hass, entry)
+    c.cook_setting_seconds = 900
+    c.beacon_phase = "cooking"
+    c.beacon_remaining, c.beacon_total = 500, None
+    c._beacon_at = _time.monotonic()
+    c._merge_beacon(c.data)
+    g = c.data.grill
+    assert (g.seconds_left, g.seconds_set, g.timer_estimated) == (500, 900, False)
+
+    c.beacon_remaining = 1200   # the cook is longer than what was staged
+    c._merge_beacon(c.data)
+    assert c.data.grill.seconds_set == 1200
+
+
+@pytest.mark.asyncio
+async def test_beacon_end_time_does_not_jitter_with_the_arrival_timing(hass, entry, freezer):
+    import time as _time
+
+    c = await _beacon_coordinator(hass, entry)
+    c.beacon_phase = "cooking"
+    c._beacon_at = _time.monotonic()
+    c.beacon_remaining, c.beacon_total = 100, 600
+    freezer.move_to("2026-11-05 12:00:00.9")
+    c._merge_beacon(c.data)
+    first = c.data.grill.end_time_utc
+    freezer.move_to("2026-11-05 12:00:02.1")   # 1.2 s later: remaining 99 -> same end, +-1 s of rounding
+    c.beacon_remaining = 99
+    c._merge_beacon(c.data)
+    assert c.data.grill.end_time_utc == first
+
+    c.beacon_remaining = 40                    # a real change (pause or correction) must come through
+    c._merge_beacon(c.data)
+    assert c.data.grill.end_time_utc != first

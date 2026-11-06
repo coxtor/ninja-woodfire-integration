@@ -89,3 +89,123 @@ def test_mfg1_from_advertisement_dict_variants():
 def test_bitread_lsb_first():
     assert bc._bitread(bytes([0b00001010]), 0, 4) == 10
     assert bc._bitread(bytes([0xFF, 0x01]), 6, 4) == 0b0111
+
+
+# --- timer / total duration (live-captured layout: @51 w17 remaining s, @104 w16 total s)
+
+def _pack(fields, length=20):
+    buf = bytearray(length)
+    for off, width, value in fields:
+        for i in range(width):
+            if (value >> i) & 1:
+                buf[(off + i) >> 3] |= 1 << ((off + i) & 7)
+    return bytes(buf)
+
+
+def _encrypt_segment(plain, key=KEY, iv=IV):
+    """Inverse of ble_beacon._decrypt_segment, so tests can build frames with known fields."""
+    from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+
+    def enc(block):
+        return Cipher(algorithms.AES(key), modes.ECB()).encryptor().update(block)
+
+    tail = len(plain) - 16
+    x = enc(bc._xor(plain[tail:], iv))
+    d0 = plain[:tail] + x[: 16 - tail]
+    return enc(bc._xor(d0, iv)) + x[16 - tail :]
+
+
+def _frame(remaining=0, total=0, phase=0, **extra):
+    fields = [(8, 8, 13), (25, 5, phase), (51, 17, remaining), (104, 16, total)]
+    fields += [(o, w, v) for o, (w, v) in extra.items()]
+    return _encrypt_segment(_pack(fields))
+
+
+def test_encrypt_helper_round_trips():
+    assert bc._decrypt_segment(_encrypt_segment(bytes(range(20))), KEY, IV) == bytes(range(20))
+
+
+def test_timer_and_total_are_decoded():
+    s = _p(_frame(remaining=1234, total=1800, phase=4))
+    assert s["remaining_s"] == 1234
+    assert s["total_s"] == 1800
+
+
+def test_preheat_holds_the_full_duration():
+    s = _p(_frame(remaining=600, total=600, phase=3))
+    assert (s["remaining_s"], s["total_s"]) == (600, 600)
+
+
+def test_idle_has_no_timer():
+    s = _p(_frame())
+    assert s["remaining_s"] is None and s["total_s"] is None
+
+
+def test_remaining_above_total_is_not_a_timer():
+    s = _p(_frame(remaining=900, total=600, phase=4))
+    assert s["remaining_s"] is None and s["total_s"] is None
+
+
+def test_a_total_that_is_not_whole_minutes_keeps_only_the_remaining_time():
+    # With a meat probe active the firmware repurposes the "total" bits.
+    s = _p(_frame(remaining=600, total=25700, phase=3))
+    assert (s["remaining_s"], s["total_s"]) == (600, None)
+
+
+def test_other_layouts_carry_no_timer():
+    plain = _pack([(8, 8, 165), (51, 17, 84699), (104, 16, 17770)])
+    s = _p(_encrypt_segment(plain))
+    assert s["remaining_s"] is None and s["total_s"] is None
+
+
+def test_existing_fields_unchanged_by_timer_decode():
+    s = _p(_frame(remaining=100, total=600, phase=4))
+    assert s["phase"] == "cooking" and s["prompt"] is None and s["lid_open"] is False
+
+
+# --- Uim power state (live-captured layout: @16 w5)
+# 3=PowerOff 4=Idle 5=Hello 7=CookActive 9=PoweringOff (live power-button toggle, 2026-11-06:
+# PowerOff -> Hello -> Idle -> PoweringOff -> PowerOff). Hello/PoweringOff only reachable via the
+# grill's own physical power button, never observed from a remote Stop/Start/Wake.
+
+def test_uim_power_off_is_flagged():
+    plain = _pack([(8, 8, 13), (16, 5, 3)])
+    s = _p(_encrypt_segment(plain))
+    assert s["powered_off"] is True
+
+
+def test_uim_idle_is_not_flagged_powered_off():
+    plain = _pack([(8, 8, 13), (16, 5, 4)])
+    s = _p(_encrypt_segment(plain))
+    assert s["powered_off"] is False
+
+
+def test_uim_cook_active_is_not_flagged_powered_off():
+    plain = _pack([(8, 8, 13), (16, 5, 7), (25, 5, 4)])
+    s = _p(_encrypt_segment(plain))
+    assert s["powered_off"] is False
+    assert s["phase"] == "cooking"
+
+
+def test_uim_powering_off_is_flagged_too():
+    # The grill is on its way down, not yet fully off: the card should offer
+    # Wake here already rather than waiting for the sequence to finish.
+    plain = _pack([(8, 8, 13), (16, 5, 9)])
+    s = _p(_encrypt_segment(plain))
+    assert s["powered_off"] is True
+
+
+def test_uim_hello_is_not_flagged_powered_off():
+    # The brief post-power-on boot step: the grill is coming up, not asleep.
+    plain = _pack([(8, 8, 13), (16, 5, 5)])
+    s = _p(_encrypt_segment(plain))
+    assert s["powered_off"] is False
+
+
+def test_phase_8_is_lid_open_during_a_wood_fire_cook():
+    # Live-validated 2026-11-06: opening the lid mid-cook (wood-fire mode)
+    # reports this phase; closing it re-runs ignition (phase 2), not a
+    # straight resume into cooking.
+    plain = _pack([(8, 8, 13), (25, 5, 8)])
+    s = _p(_encrypt_segment(plain))
+    assert s["phase"] == "lid_open"

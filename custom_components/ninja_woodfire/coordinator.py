@@ -71,6 +71,14 @@ _AWS_RETRY_S = 60
 _BLE_RETRY_S = 60
 # How long a passively-scanned advertisement beacon reading stays valid.
 _BEACON_TTL_S = 60
+# A preheat/ignition this short can only mean it was skipped at the grill's
+# own panel (hold Start): the firmware's own `is_prehaet_skipped` flag only
+# reflects an app/HA-issued skip, not this hardware one, so the duration is
+# timed directly instead. Live-measured 2026-11-06, 9 real transitions: every
+# hardware-skipped preheat/ignition ran 2-10 s; every one that ran its course
+# ran 262-590 s. No observed overlap, so a generous threshold well under the
+# shortest genuine run is used.
+_PREHEAT_SKIP_UNDER_S = 30
 # No beacon AND no successful connect for this long -> the grill is off / out of
 # range. Shorter outages keep the last state (smooths transient radio glitches).
 _OFFLINE_AFTER_S = 60
@@ -194,6 +202,14 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
         self.beacon_lid: bool | None = None
         self.beacon_phase: str | None = None
         self.beacon_prompt: str | None = None
+        # The grill's own cook timer from the beacon: seconds left / set duration.
+        self.beacon_remaining: int | None = None
+        self.beacon_total: int | None = None
+        # True while the firmware's own Uim state machine reports PowerOff
+        # (display fully off) - distinct from merely idle-and-responsive,
+        # which the grill's beacon otherwise reports identically (no phase).
+        self.beacon_powered_off: bool = False
+        self._beacon_end: int | None = None
         # The beacon slot (key, nonce) that decrypts the advertisement; from the
         # pasted key bundle. None -> no beacon decode (probe/lid/phase stay unknown).
         self.beacon_slot = beacon_slot
@@ -347,10 +363,14 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
         self.beacon_lid = parsed["lid_open"]
         self.beacon_phase = parsed["phase"]
         self.beacon_prompt = parsed["prompt"]
+        self.beacon_remaining = parsed.get("remaining_s")
+        self.beacon_total = parsed.get("total_s")
+        self.beacon_powered_off = bool(parsed.get("powered_off"))
         if _LOGGER.isEnabledFor(logging.DEBUG):
             _LOGGER.debug(
-                "Beacon decoded: phase=%r lid=%r prompt=%r probes=%r",
+                "Beacon decoded: phase=%r lid=%r prompt=%r probes=%r timer=%r/%r",
                 parsed["phase"], parsed["lid_open"], parsed["prompt"], self.beacon_probes,
+                self.beacon_remaining, self.beacon_total,
             )
         self._beacon_at = time.monotonic()
         self._last_contact_m = self._beacon_at   # a beacon means the grill is reachable
@@ -364,6 +384,21 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
             if self.data.online:
                 self._emit_lifecycle_events(self.data)
             self.async_update_listeners()
+
+    def _steady_end(self, remaining: int) -> int | None:
+        """End timestamp for `remaining` seconds, without +-1 s arrival jitter.
+
+        The beacon arrives about once a second at uneven moments, so now+remaining
+        wobbles by a second; keep the previous end unless it really moved.
+        """
+        if not remaining:
+            self._beacon_end = None
+            return None
+        end = int(dt_util.utcnow().timestamp()) + remaining
+        if self._beacon_end is not None and abs(end - self._beacon_end) <= 2:
+            end = self._beacon_end
+        self._beacon_end = end
+        return end
 
     def _merge_beacon(self, state: CombinedState) -> None:
         """Overlay beacon probe temps onto a local (BLE) state.
@@ -446,6 +481,13 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
             # (in ACTIVE_STATES) so a lid flap during a cook can't be
             # mistaken for a stop/restart.
             state.grill.state = "lid_open"
+        elif self.beacon_phase is None and self.beacon_powered_off and not is_active(state):
+            # The grill still advertises with its display fully off (Uim ==
+            # UimPowerOff) - it only stops advertising while a GATT client is
+            # connected. Without this, a sleeping-but-beaconing grill reads
+            # identically to a genuinely idle one (no phase either way) and
+            # the card would offer a Start the firmware silently ignores.
+            state.grill.state = "powered_off"
         elif self.beacon_phase is None and not is_active(state):
             # A fresh beacon with no active phase means the grill is on but idle.
             # Pin it to "idle" so the card shows a stable "Ready" instead of
@@ -455,31 +497,50 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
         # the card reflects the running cook instead of an empty header.
         if state.grill.state in ("cooking", "preheat", "ignition") and not state.grill.mode:
             state.grill.mode = self.cook_setting_mode
-        # Local cook-timer estimate. The GATT timer frame is usually absent over
-        # BLE, so once the grill is cooking we count down the configured duration
-        # (the firmware's cook timer also only starts after preheat). A real 0x0f
-        # timer always wins; only our own estimate is recomputed — on every
-        # merge, so it keeps counting down and follows a live duration change
-        # instead of freezing at the value first written here.
-        real_timer = bool(state.grill.seconds_set) and not state.grill.timer_estimated
-        if state.grill.state == "cooking" and not real_timer:
+        # Cook timer. The grill broadcasts its own countdown in the beacon (about
+        # once a second): that is the real value, fresher than a GATT frame and
+        # right even for a cook started at the grill itself. Only without it do
+        # we fall back to a GATT timer frame, and failing that to counting down
+        # the configured duration ourselves (the firmware's timer also only
+        # starts after preheat).
+        grill = state.grill
+        if self.beacon_remaining is not None and not in_stop_grace:
+            # Without a usable total (a meat probe active) keep the staged
+            # duration, but never one shorter than what is still to come.
+            grill.seconds_set = self.beacon_total or max(
+                self.cook_setting_seconds, self.beacon_remaining
+            )
+            grill.seconds_left = self.beacon_remaining
+            grill.end_time_utc = self._steady_end(
+                self.beacon_remaining if self.beacon_phase == "cooking" else 0
+            )
+            grill.timer_estimated = False
+            self._local_cook_end = None
+        elif grill.state == "cooking" and not (
+            bool(grill.seconds_set) and not grill.timer_estimated
+        ):
             # Start the countdown only once the lid is closed after loading — the
             # firmware's cook timer starts then too, not the instant preheat ends
             # / skip is pressed. Once started, keep counting through lid flaps.
-            if self._local_cook_end is None and not state.grill.lid_open:
+            if self._local_cook_end is None and not grill.lid_open:
                 self._local_cook_end = dt_util.utcnow() + timedelta(seconds=self.cook_setting_seconds)
             if self._local_cook_end is not None:
                 left = max(0, int((self._local_cook_end - dt_util.utcnow()).total_seconds()))
-                state.grill.seconds_set = self.cook_setting_seconds
-                state.grill.seconds_left = left
-                state.grill.end_time_utc = int(self._local_cook_end.timestamp())
-                state.grill.timer_estimated = True
-        elif state.grill.state not in ACTIVE_STATES:
+                grill.seconds_set = self.cook_setting_seconds
+                grill.seconds_left = left
+                grill.end_time_utc = int(self._local_cook_end.timestamp())
+                grill.timer_estimated = True
+        elif grill.state not in ACTIVE_STATES:
             # Only reset once the cook has actually ended (idle/done/off) —
             # NOT for a mid-cook pause (lid_open/flip/get_food), or a lid flap
             # or flip prompt would wipe the running timer and restart it from
             # the full duration once cooking resumes.
             self._local_cook_end = None
+            if grill.timer_estimated or grill.seconds_left is not None:
+                # ...and drop the timer values, which this in-place state would
+                # otherwise keep showing after the cook is over.
+                grill.seconds_set = grill.seconds_left = grill.end_time_utc = None
+                grill.timer_estimated = False
         probes = []
         for idx, temp in enumerate(self.beacon_probes):
             plugged = temp is not None
@@ -602,6 +663,7 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
     def _reset_cook_flags(self) -> None:
         self._seen_preheat = False
         self._preheat_fired = False
+        self._preheat_started_at: float | None = None
         self._halftime_fired = False
         self._probe_start_temp: list[float | None] = [None, None]
         self._probe_target: list[int | None] = [None, None]
@@ -616,6 +678,11 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
         g = state.grill
         self._seen_preheat = is_preheating(state)
         self._preheat_fired = not self._seen_preheat
+        # We don't know how long it had already been running before this
+        # restart; start the clock now. A restart landing right at the tail
+        # end of a genuine preheat could misreport it as skipped - an
+        # accepted edge case, not worth tracking across restarts for.
+        self._preheat_started_at = time.monotonic() if self._seen_preheat else None
         self._halftime_fired = bool(
             g.seconds_set and g.seconds_left is not None and g.seconds_left <= g.seconds_set / 2
         )
@@ -652,6 +719,8 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
             fire(EVENT_COOK_STARTED, {**common, "seconds_set": grill.seconds_set, "smoke": grill.smoke})
 
         if active and is_preheating(state):
+            if not self._seen_preheat:
+                self._preheat_started_at = time.monotonic()
             self._seen_preheat = True
         elif (
             active
@@ -662,7 +731,14 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
             and (g in COOKING_STATES | PAUSED_STATES or c in COOKING_STATES | PAUSED_STATES)
         ):
             self._preheat_fired = True
-            fire(EVENT_PREHEAT_COMPLETE, common)
+            elapsed = (
+                time.monotonic() - self._preheat_started_at
+                if self._preheat_started_at is not None else None
+            )
+            fire(EVENT_PREHEAT_COMPLETE, {
+                **common,
+                "skipped": elapsed is not None and elapsed < _PREHEAT_SKIP_UNDER_S,
+            })
 
         if (
             active
@@ -1267,6 +1343,17 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
                 skip_preheat=not is_preheating(live),
             )
         await self._burst_refresh()
+
+    async def async_extend_cook(self, minutes: int) -> None:
+        """Add minutes to the planned total duration.
+
+        Active: re-issues the running cook with the longer total (elapsed
+        time preserved, same as any other live duration change). Idle: adds
+        to the staged duration for the next Start.
+        """
+        await self.async_modify_cook(
+            seconds=self.live_or_staged_seconds + int(minutes) * 60
+        )
 
     async def async_set_probe(
         self, idx: int, *, enabled: bool | None = None, setpoint: int | None = None

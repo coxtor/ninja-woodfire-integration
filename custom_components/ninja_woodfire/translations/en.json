@@ -235,6 +235,12 @@
       },
       "wake": {
         "name": "Wake"
+      },
+      "extend_cook_1min": {
+        "name": "Add 1 min"
+      },
+      "extend_cook_5min": {
+        "name": "Add 5 min"
       }
     }
   },
@@ -254,6 +260,10 @@
         "duration": {
           "name": "Duration",
           "description": "Total cook duration in minutes (including the time already cooked)."
+        },
+        "add_minutes": {
+          "name": "Add minutes",
+          "description": "Adds to the current total duration instead of replacing it. Use either this or duration, not both."
         },
         "smoke": {
           "name": "Woodfire flavour",

@@ -50,6 +50,18 @@ BUTTONS: tuple[NinjaButtonDescription, ...] = (
         always_available=True,
         press_fn=lambda c: c.async_wake(),
     ),
+    NinjaButtonDescription(
+        key="extend_cook_1min",
+        translation_key="extend_cook_1min",
+        icon="mdi:timer-plus",
+        press_fn=lambda c: c.async_extend_cook(1),
+    ),
+    NinjaButtonDescription(
+        key="extend_cook_5min",
+        translation_key="extend_cook_5min",
+        icon="mdi:timer-plus",
+        press_fn=lambda c: c.async_extend_cook(5),
+    ),
 )
 
 
