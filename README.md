@@ -44,7 +44,12 @@ Matching Lovelace card: [ninja-woodfire-card](https://github.com/coxtor/ninja-wo
 
 - **Cook control** — start, stop, skip-preheat, wake. Mode-aware target
   temperature, duration, smoke, per-probe targets. Live changes keep heat
-  level, probe targets and elapsed time.
+  level, probe targets and elapsed time. `+1 min` / `+5 min` buttons extend
+  a running cook's total duration without retyping it.
+- **Probe food & doneness presets** — pick a protein (Beef, Chicken, Pork,
+  Lamb, Fish) and a doneness level per probe instead of a raw °C target;
+  resolves to the same manual-setpoint command the grill already
+  understands (no protocol change, BLE has no concept of a preset).
 - **Sensors** — grill / air / smoke / meat-probe temperatures, cook & preheat
   progress, end-time, mode, setpoint, lid, per-probe status & target.
 - **Probe alarm** — a plain temperature threshold per probe
@@ -178,6 +183,8 @@ Normally you only need `--app` — the rest are for edge cases.
     mode: roast            # one of the supported cook modes
     temp: 200               # °C — heat level 1–3 in grill mode, target temp otherwise
     duration: 40             # total cook duration in MINUTES, including elapsed time
+    # add_minutes: 5         # ...or add to the current total instead of replacing it
+                               # (use either duration or add_minutes, not both)
     smoke: true
     skip_preheat: false
     probe_0_enabled: true
