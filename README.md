@@ -97,14 +97,20 @@ apply — skip ahead to *Services*.
 
 Local communication with the grill over Bluetooth LE — no account needed. Cook
 controls, live chamber and meat-probe temperatures, the lid state, the cook
-phase (ignition / preheat / cooking) and the add-food / flip / done / get-food
-prompts all work locally; the *Wake* button nudges a grill in standby back
-online. Works through ESPHome Bluetooth proxies.
+phase (ignition / preheat / cooking / resting), the probe's own status
+(cooking / done / get-food / resting, with a real countdown for the
+300-second post-target Rest window), and the add-food / flip / done /
+get-food prompts all work locally; the *Wake* button nudges a grill in
+standby back online, and powered-off/standby is correctly distinguished
+from idle (read from the firmware's own power-state field in the
+advertisement, not inferred). Works through ESPHome Bluetooth proxies.
 
-The phase and prompt are read from the grill's advertisement beacon. A few
-states aren't mapped there yet — **contributions welcome**: the *resting* phase,
-the *close-lid* prompt and the *end* screen. "Powered off" isn't broadcast at
-all (the grill just stops advertising), so it simply shows as offline.
+Reverse-engineering the local protocol is near feature-complete at this
+point — close to everything observed on the beacon and over GATT has a
+confirmed meaning. What's left is a handful of rare/unused bits with no
+practical effect on any feature (and, almost by definition, some things we
+don't know we don't know yet) — **contributions and live-test reports
+welcome** if you spot a state the integration doesn't show correctly.
 
 ## Local setup — extract your keys
 
