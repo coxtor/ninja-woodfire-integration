@@ -239,6 +239,9 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
         # probe's own enable flag (which the firmware clears on its own once
         # the cook is done).
         self._probe_drove_this_cook = False
+        # See _apply_post_cook_hold.
+        self._post_cook_hold: str | None = None
+        self._hold_seen_open = False
         # Skip-preheat toggle: the firmware ignores skip=1 on the initial cook;
         # it only skips when re-sent during preheat (what the Skip button does).
         # So when the toggle is on we auto-fire that skip once preheat is seen.
@@ -423,6 +426,42 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
         self._beacon_end = end
         return end
 
+    def _apply_post_cook_hold(self, state: CombinedState, fresh_signal: str | None) -> None:
+        """Keep "done"/"get_food" showing through a lid open-close cycle.
+
+        Per the user (matches the real grill/app): the firmware doesn't
+        return to idle on its own once a cook finishes - it stays there
+        until the lid is opened and closed again (or stopped explicitly).
+        But the beacon's own signals for "done"/"get_food" (the @98 prompt,
+        or phase 5 for a probe cook) are transient and can clear on their
+        own well before that. `fresh_signal` is this cycle's beacon-derived
+        reading alone ("done"/"get_food"/"active"/None) - not state.grill.state,
+        which can be a stale carry-over from a prior merge and would make a
+        held "done"/"get_food" look self-renewing forever, never reaching the
+        lid-tracking branch below. Exception: if the lid was already open
+        when the hold started (e.g. an open-grill mode), closing it once is
+        enough - there's nothing to "open" that hasn't already happened.
+        """
+        if fresh_signal in ("done", "get_food"):
+            if self._post_cook_hold is None:
+                self._hold_seen_open = bool(state.grill.lid_open)
+            self._post_cook_hold = fresh_signal
+            state.grill.state = fresh_signal
+            return
+        if fresh_signal == "active":
+            self._post_cook_hold = None
+            return
+        if self._post_cook_hold is None:
+            return
+        if state.grill.lid_open:
+            self._hold_seen_open = True
+        elif self._hold_seen_open:
+            self._post_cook_hold = None
+            self._cook_seen = False
+            state.grill.state = "idle"
+            return
+        state.grill.state = self._post_cook_hold
+
     def _merge_beacon(self, state: CombinedState) -> None:
         """Overlay beacon probe temps onto a local (BLE) state.
 
@@ -546,6 +585,19 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
             # Pin it to "idle" so the card shows a stable "Ready" instead of
             # flapping to Unknown whenever the GATT state frame is absent.
             state.grill.state = "idle"
+        if in_stop_grace:
+            # Ground truth is already idle here; no hold to track or honor.
+            self._post_cook_hold = None
+        else:
+            if prompt_state in ("done", "get_food"):
+                fresh_signal = prompt_state
+            elif self.beacon_phase == "get_food":
+                fresh_signal = "get_food"
+            elif self.beacon_phase in ("cooking", "preheat", "ignition"):
+                fresh_signal = "active"
+            else:
+                fresh_signal = None
+            self._apply_post_cook_hold(state, fresh_signal)
         # Without the GATT frame the mode is blank; show the configured cook so
         # the card reflects the running cook instead of an empty header.
         if state.grill.state in ("cooking", "preheat", "ignition") and not state.grill.mode:

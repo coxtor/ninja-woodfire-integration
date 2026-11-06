@@ -1390,6 +1390,107 @@ async def test_cookstate_pause_shows_as_get_food_without_waiting_for_a_prompt(ha
 
 
 @pytest.mark.asyncio
+async def test_get_food_persists_until_a_lid_open_close_cycle(hass, entry):
+    # Per the user, matching the real grill/app: it doesn't fall back to idle
+    # on its own once done - only once the lid is opened and closed again.
+    # The beacon's own "get_food" signal (phase 5) is transient and can clear
+    # on its own well before that, which must not make the card flicker back
+    # to idle early.
+    import time as _time
+
+    c = await _beacon_coordinator(hass, entry)
+    c._cook_seen = True
+    c.beacon_phase = "get_food"
+    c.beacon_lid = False
+    c._beacon_at = _time.monotonic()
+    c._merge_beacon(c.data)
+    assert c.data.grill.state == "get_food"
+
+    # The beacon's phase signal clears, but nothing has touched the lid yet.
+    c.beacon_phase = None
+    c._merge_beacon(c.data)
+    assert c.data.grill.state == "get_food"
+
+    # Lid opens...
+    c.beacon_lid = True
+    c._merge_beacon(c.data)
+    assert c.data.grill.state == "get_food"
+
+    # ...then closes: the cycle completes, now it's free to fall back to idle.
+    c.beacon_lid = False
+    c._merge_beacon(c.data)
+    assert c.data.grill.state == "idle"
+
+
+@pytest.mark.asyncio
+async def test_get_food_with_the_lid_already_open_only_needs_it_closed_once(hass, entry):
+    # Exception per the user: if the lid was already open when the hold
+    # started (e.g. an open-grill mode), there's nothing to "open" - closing
+    # it once is enough to release the hold.
+    import time as _time
+
+    c = await _beacon_coordinator(hass, entry)
+    c._cook_seen = True
+    c.beacon_phase = "get_food"
+    c.beacon_lid = True
+    c._beacon_at = _time.monotonic()
+    c._merge_beacon(c.data)
+    assert c.data.grill.state == "get_food"
+
+    c.beacon_phase = None
+    c.beacon_lid = False
+    c._merge_beacon(c.data)
+    assert c.data.grill.state == "idle"
+
+
+@pytest.mark.asyncio
+async def test_an_explicit_stop_clears_the_post_cook_hold_immediately(hass, entry):
+    import time as _time
+
+    c = await _beacon_coordinator(hass, entry)
+    c._cook_seen = True
+    c.beacon_phase = "get_food"
+    c._beacon_at = _time.monotonic()
+    c._merge_beacon(c.data)
+    assert c.data.grill.state == "get_food"
+
+    c._stop_issued_at = _time.monotonic()
+    c.beacon_phase = None
+    c._merge_beacon(c.data)
+    assert c.data.grill.state == "idle"
+
+    # And the hold must not come back once the grace window itself passes.
+    # (_cook_seen itself is reset by the real stop/COOK_DONE lifecycle, not
+    # by _merge_beacon alone - set it here to isolate the hold's own logic.)
+    c._cook_seen = False
+    c._stop_issued_at = _time.monotonic() - 999
+    c._merge_beacon(c.data)
+    assert c.data.grill.state == "idle"
+
+
+@pytest.mark.asyncio
+async def test_a_new_cook_starting_clears_a_stale_post_cook_hold(hass, entry):
+    import time as _time
+
+    c = await _beacon_coordinator(hass, entry)
+    c._cook_seen = True
+    c.beacon_phase = "get_food"
+    c._beacon_at = _time.monotonic()
+    c._merge_beacon(c.data)
+    assert c.data.grill.state == "get_food"
+
+    c.beacon_phase = "cooking"
+    c._merge_beacon(c.data)
+    assert c.data.grill.state == "cooking"
+
+    # If it now goes blank again before any lid cycle, the stale hold from
+    # the *previous* cook must not resurrect itself.
+    c.beacon_phase = None
+    c._merge_beacon(c.data)
+    assert c.data.grill.state == "cooking"
+
+
+@pytest.mark.asyncio
 async def test_a_frame_without_mfg2_keeps_the_last_known_probe_state(hass, entry):
     from .test_ble_beacon import _frame, _frame43
 
