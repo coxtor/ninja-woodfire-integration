@@ -26,9 +26,11 @@ async def async_setup_entry(
         CookDurationNumber(coordinator),
         CookTempNumber(coordinator),
         ProbeSetpointNumber(coordinator, probe_index=0),
+        ProbeAlarmTempNumber(coordinator, probe_index=0),
     ]
     if coordinator.capabilities.has_two_probes:
         entities.append(ProbeSetpointNumber(coordinator, probe_index=1))
+        entities.append(ProbeAlarmTempNumber(coordinator, probe_index=1))
     async_add_entities(entities)
 
 
@@ -163,3 +165,38 @@ class ProbeSetpointNumber(NinjaWoodfireEntity, NumberEntity):
 
     async def async_set_native_value(self, value: float) -> None:
         await self.coordinator.async_set_probe(self._probe_index, setpoint=int(value))
+
+
+class ProbeAlarmTempNumber(NinjaWoodfireEntity, NumberEntity):
+    """Purely informational alarm threshold for a probe, in °C.
+
+    Independent of the target/enabled mechanism (ProbeSetpointNumber above) -
+    never sent to the grill, so it works alongside a time-controlled cook: a
+    plugged-in probe reports its real temperature regardless of mode.
+    Companion switch ('Probe N alarm enabled') arms it.
+    """
+
+    _requires_live_state = False
+    _attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
+    _attr_native_min_value = PROBE_TARGET_MIN_C
+    _attr_native_max_value = PROBE_TARGET_MAX_C
+    _attr_native_step = 1
+    _attr_mode = NumberMode.BOX
+    _attr_entity_category = EntityCategory.CONFIG
+    _attr_icon = "mdi:thermometer-alert"
+
+    def __init__(
+        self, coordinator: NinjaWoodfireCoordinator, probe_index: int
+    ) -> None:
+        super().__init__(coordinator)
+        self._probe_index = probe_index
+        self._attr_translation_key = f"probe{probe_index}_alarm_temp"
+        self._attr_unique_id = f"{coordinator.dsn}_probe{probe_index}_alarm_temp"
+
+    @property
+    def native_value(self) -> float | None:
+        temp = self.coordinator.probe_alarm_temp[self._probe_index]
+        return float(temp) if temp is not None else None
+
+    async def async_set_native_value(self, value: float) -> None:
+        await self.coordinator.async_set_probe_alarm_temp(self._probe_index, int(value))

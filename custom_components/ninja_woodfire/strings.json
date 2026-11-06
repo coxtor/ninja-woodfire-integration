@@ -219,6 +219,12 @@
       },
       "probe1_target_temp": {
         "name": "Probe 2 target temp"
+      },
+      "probe0_alarm_temp": {
+        "name": "Probe 1 alarm temp"
+      },
+      "probe1_alarm_temp": {
+        "name": "Probe 2 alarm temp"
       }
     },
     "switch": {
@@ -233,6 +239,12 @@
       },
       "probe1_enabled": {
         "name": "Probe 2 target enabled"
+      },
+      "probe0_alarm_enabled": {
+        "name": "Probe 1 alarm enabled"
+      },
+      "probe1_alarm_enabled": {
+        "name": "Probe 2 alarm enabled"
       }
     },
     "button": {

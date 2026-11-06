@@ -219,6 +219,12 @@
       },
       "probe1_target_temp": {
         "name": "Sonde 2 Zieltemp"
+      },
+      "probe0_alarm_temp": {
+        "name": "Sonde 1 Alarmtemp"
+      },
+      "probe1_alarm_temp": {
+        "name": "Sonde 2 Alarmtemp"
       }
     },
     "switch": {
@@ -233,6 +239,12 @@
       },
       "probe1_enabled": {
         "name": "Sonde 2 Ziel aktiv"
+      },
+      "probe0_alarm_enabled": {
+        "name": "Sonde 1 Alarm aktiv"
+      },
+      "probe1_alarm_enabled": {
+        "name": "Sonde 2 Alarm aktiv"
       }
     },
     "button": {

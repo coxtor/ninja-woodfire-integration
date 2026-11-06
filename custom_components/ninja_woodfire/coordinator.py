@@ -43,6 +43,7 @@ from .const import (
     EVENT_COOK_STARTED,
     EVENT_PREHEAT_COMPLETE,
     EVENT_PROMPT,
+    EVENT_PROBE_ALARM,
     EVENT_PROBE_HALFWAY,
     EVENT_PROBE_TARGET_REACHED,
     EVENT_START_NOT_CONFIRMED,
@@ -174,6 +175,14 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
         # firmware doesn't echo which preset produced a target.
         self.cook_setting_probe_food: list[str] = [PROBE_FOOD_MANUAL, PROBE_FOOD_MANUAL]
         self.cook_setting_probe_doneness_index: list[int] = [0, 0]
+        # Purely informational alarm, independent of the probe's own
+        # target/enabled mechanism above - never sent to the grill, HA-side
+        # only. Works alongside a time-controlled cook: a plugged-in probe
+        # reports its real temperature regardless of mode (confirmed live
+        # 2026-11-06).
+        self.probe_alarm_temp: list[int | None] = [None, None]
+        self.probe_alarm_enabled: list[bool] = [False, False]
+        self._probe_alarm_fired = [False, False]
         # The firmware reports grill mode as °C and resets "seconds set" to
         # the remaining time on every re-issue. Remember what we sent so the
         # live state can be mapped back to what the user chose.
@@ -922,6 +931,24 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
             if not self._probe_target_fired[idx] and probe.temp >= target:
                 self._probe_target_fired[idx] = True
                 fire(EVENT_PROBE_TARGET_REACHED, base)
+        for idx, probe in enumerate(state.probes.probes[:2]):
+            # Independent of probe.active (the target/enabled mechanism that
+            # drives temperature-controlled cooking, exclusive with a timed
+            # cook on this firmware) - a plugged-in probe reports its real
+            # temperature either way, confirmed live 2026-11-06, so this
+            # alarm works alongside a time-controlled cook too.
+            threshold = self.probe_alarm_temp[idx]
+            if not self.probe_alarm_enabled[idx] or threshold is None or not probe.plugged_in:
+                self._probe_alarm_fired[idx] = False
+                continue
+            if not self._probe_alarm_fired[idx] and probe.temp >= threshold:
+                self._probe_alarm_fired[idx] = True
+                fire(EVENT_PROBE_ALARM, {
+                    "dsn": self.dsn, "probe_index": idx,
+                    "threshold": threshold, "current": probe.temp,
+                })
+            elif probe.temp < threshold:
+                self._probe_alarm_fired[idx] = False  # re-arm once it drops back below
 
     # ------------------------------------------------------------------ live state
 
@@ -1600,6 +1627,22 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
             idx, enabled=True, setpoint=preset.levels[level_index].temp_c,
             _from_preset=True,
         )
+
+    async def async_set_probe_alarm_temp(self, idx: int, temp: int) -> None:
+        """Set the informational alarm threshold for a probe.
+
+        HA-side only, never sent to the grill - independent of the probe's
+        own target/enabled mechanism (see async_set_probe_food's docstring),
+        so it works alongside a time-controlled cook.
+        """
+        self.probe_alarm_temp[idx] = int(temp)
+        self._probe_alarm_fired[idx] = False
+        self.async_update_listeners()
+
+    async def async_set_probe_alarm_enabled(self, idx: int, enabled: bool) -> None:
+        self.probe_alarm_enabled[idx] = enabled
+        self._probe_alarm_fired[idx] = False
+        self.async_update_listeners()
 
     async def _reissue(
         self,

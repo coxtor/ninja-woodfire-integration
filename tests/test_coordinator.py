@@ -11,6 +11,7 @@ from custom_components.ninja_woodfire.const import (
     EVENT_COOK_HALFTIME,
     EVENT_COOK_STARTED,
     EVENT_PREHEAT_COMPLETE,
+    EVENT_PROBE_ALARM,
     EVENT_PROBE_HALFWAY,
     EVENT_PROBE_TARGET_REACHED,
     SCAN_INTERVAL_ACTIVE,
@@ -385,6 +386,43 @@ async def test_probe_events_rearm_when_target_changes(hass, coordinator, events)
 
     await _feed(hass, coordinator, mk_state(), st(20, 60), st(60, 60), st(60, 80), st(80, 80))
     assert events.count(EVENT_PROBE_TARGET_REACHED) == 2
+
+
+# ---------------------------------------------------------- probe temperature alarm
+
+
+async def test_probe_alarm_fires_independent_of_the_target_mechanism(hass, coordinator, events):
+    # active=0 (not a target probe), but plugged in - the alarm must not
+    # require probe.active, which only reflects the target/enabled
+    # mechanism this is deliberately independent of.
+    def st(temp):
+        return mk_state(cooking(), probes={"probes": [probe(temp=temp, active=0)]})
+
+    coordinator.probe_alarm_enabled[0] = True
+    coordinator.probe_alarm_temp[0] = 60
+    await _feed(hass, coordinator, mk_state(), st(40), st(55))
+    assert EVENT_PROBE_ALARM not in events
+    await _feed(hass, coordinator, st(61))
+    assert events.count(EVENT_PROBE_ALARM) == 1
+
+
+async def test_probe_alarm_does_not_fire_while_disabled(hass, coordinator, events):
+    def st(temp):
+        return mk_state(cooking(), probes={"probes": [probe(temp=temp, active=0)]})
+
+    coordinator.probe_alarm_temp[0] = 60
+    await _feed(hass, coordinator, mk_state(), st(40), st(70))
+    assert EVENT_PROBE_ALARM not in events
+
+
+async def test_probe_alarm_rearms_after_dropping_back_below(hass, coordinator, events):
+    def st(temp):
+        return mk_state(cooking(), probes={"probes": [probe(temp=temp, active=0)]})
+
+    coordinator.probe_alarm_enabled[0] = True
+    coordinator.probe_alarm_temp[0] = 60
+    await _feed(hass, coordinator, mk_state(), st(40), st(65), st(50), st(65))
+    assert events.count(EVENT_PROBE_ALARM) == 2
 
 
 async def test_preheat_without_running_timer_uses_full_duration(coordinator):

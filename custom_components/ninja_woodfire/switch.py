@@ -112,6 +112,26 @@ SWITCHES: tuple[NinjaSwitchDescription, ...] = (
             and m.supports_probe
         ),
     ),
+    NinjaSwitchDescription(
+        key="probe0_alarm_enabled",
+        translation_key="probe0_alarm_enabled",
+        icon="mdi:thermometer-alert",
+        entity_category=EntityCategory.CONFIG,
+        get_fn=lambda c: c.probe_alarm_enabled[0],
+        post_set_fn=lambda c, v: c.async_set_probe_alarm_enabled(0, v),
+        # Unlike probe0_enabled: not gated on mode/supports_probe - purely
+        # informational, works regardless of cook style (see
+        # ProbeAlarmTempNumber's docstring).
+    ),
+    NinjaSwitchDescription(
+        key="probe1_alarm_enabled",
+        translation_key="probe1_alarm_enabled",
+        icon="mdi:thermometer-alert",
+        entity_category=EntityCategory.CONFIG,
+        get_fn=lambda c: c.probe_alarm_enabled[1],
+        post_set_fn=lambda c, v: c.async_set_probe_alarm_enabled(1, v),
+        available_fn=lambda c: c.capabilities.has_two_probes,
+    ),
 )
 
 

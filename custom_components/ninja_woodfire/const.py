@@ -45,6 +45,13 @@ EVENT_COOK_HALFTIME = "ninja_woodfire_cook_halftime"
 EVENT_COOK_DONE = "ninja_woodfire_cook_done"
 EVENT_PROBE_TARGET_REACHED = "ninja_woodfire_probe_target_reached"
 EVENT_PROBE_HALFWAY = "ninja_woodfire_probe_halfway"
+# Purely informational: a plugged-in probe crossing a user-set alarm
+# threshold. Independent of the probe's own target/enabled mechanism (which
+# drives temperature-controlled cooking) - a probe reports its temperature
+# regardless of mode, confirmed live 2026-11-06, so this works alongside a
+# time-controlled cook without touching the exclusive cook-style the
+# firmware itself enforces.
+EVENT_PROBE_ALARM = "ninja_woodfire_probe_alarm"
 EVENT_PROMPT = "ninja_woodfire_prompt"
 # Fired when a local BLE start_cook produced no independent confirmation
 # (beacon never showed an active phase) within the grace window below — the
