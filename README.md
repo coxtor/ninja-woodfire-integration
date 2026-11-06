@@ -38,7 +38,12 @@ Chosen in the setup wizard:
   one-time key bundle you extract yourself from your own copy of the app — see
   **[Local setup — extract your keys](#local-setup--extract-your-keys)**.
 
-Matching Lovelace card: [ninja-woodfire-card](https://github.com/coxtor/ninja-woodfire-card).
+Matching Lovelace card: [ninja-woodfire-card](https://github.com/coxtor/ninja-woodfire-card) —
+take a look:
+
+<p align="center">
+  <img src="assets/woodfire-card-screenshot.png" width="320" alt="Ninja Woodfire Grill Card showing a time-based cook with the settings panel open">
+</p>
 
 ## Features
 
