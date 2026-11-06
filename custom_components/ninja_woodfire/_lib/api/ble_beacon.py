@@ -88,6 +88,7 @@ _PROBE_STATE_MAP = {
 _UIM = (16, 5)
 _UIM_POWERED_OFF = 3
 _UIM_POWERING_OFF = 9
+_UIM_IDLE = 4
 
 # Mapped against a full cook captured over the air (phase/prompt confirmed
 # against the grill display): preheat->add food->cooking->flip->done->get food.
@@ -259,6 +260,13 @@ def parse_beacon(mfg: bytes | None, key: bytes, iv: bytes) -> dict | None:
         "remaining_s": remaining,
         "total_s": total,
         "powered_off": _bitread(plain, *_UIM) in (_UIM_POWERED_OFF, _UIM_POWERING_OFF),
+        # Live-observed 2026-11-06: a probe-driven cook's post-cook hold
+        # ("get_food") can outlast the lid-cycle release path entirely - the
+        # grill ran its own physical "Rest" countdown and returned to a
+        # genuine UimIdle on its own, with no lid action at all. phase alone
+        # can't tell "still resting" from "actually idle now" (both blank),
+        # so Uim itself is the only reliable ground truth here.
+        "uim_idle": _bitread(plain, *_UIM) == _UIM_IDLE,
         "probe0_state": probe0_state,
         "probe1_state": probe1_state,
     }

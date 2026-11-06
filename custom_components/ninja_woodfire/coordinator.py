@@ -225,6 +225,11 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
         # (display fully off) - distinct from merely idle-and-responsive,
         # which the grill's beacon otherwise reports identically (no phase).
         self.beacon_powered_off: bool = False
+        # True while the firmware's own Uim state machine reports Idle. Unlike
+        # beacon_phase (which blanks identically for "still resting" and
+        # "genuinely idle"), this is ground truth that the grill is done -
+        # used to release a stuck post-cook hold even with no lid cycle.
+        self.beacon_uim_idle: bool = False
         self._beacon_end: int | None = None
         # The beacon slot (key, nonce) that decrypts the advertisement; from the
         # pasted key bundle. None -> no beacon decode (probe/lid/phase stay unknown).
@@ -399,6 +404,7 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
         self.beacon_remaining = parsed.get("remaining_s")
         self.beacon_total = parsed.get("total_s")
         self.beacon_powered_off = bool(parsed.get("powered_off"))
+        self.beacon_uim_idle = bool(parsed.get("uim_idle"))
         if _LOGGER.isEnabledFor(logging.DEBUG):
             _LOGGER.debug(
                 "Beacon decoded: mfg_len=%d phase=%r lid=%r prompt=%r probes=%r timer=%r/%r "
@@ -537,6 +543,13 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
         # food, done. This also keeps "cooking" — and thus the cook timer — from
         # starting until the prompt clears (food actually went in).
         prompt_state = _PROMPT_STATE.get(prompt)
+        # Ground truth: the firmware's own Uim state machine says Idle right
+        # now. Overrides everything below, including a "get_food" prompt or
+        # phase that can keep reporting for a long time after the probe
+        # finished (the grill's own physical Rest countdown) - live-observed
+        # 2026-11-06, this is how a stuck post-cook hold gets released when
+        # there was no lid cycle at all, not just a fallback for Stop.
+        uim_says_idle = self.beacon_uim_idle and not in_stop_grace
         if in_stop_grace:
             # We know the ground truth here: Stop was just issued. Pin idle
             # outright rather than merely skipping the promotion — a fresh
@@ -544,6 +557,9 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
             # default grill.state is "unknown" (no 0x0f frame), and leaving
             # that alone would strand the card on "unknown" for the whole
             # grace window instead of showing idle.
+            state.grill.state = "idle"
+        elif uim_says_idle:
+            self._cook_seen = False
             state.grill.state = "idle"
         elif prompt_state is not None:
             state.grill.state = prompt_state
@@ -601,7 +617,7 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
             # Pin it to "idle" so the card shows a stable "Ready" instead of
             # flapping to Unknown whenever the GATT state frame is absent.
             state.grill.state = "idle"
-        if in_stop_grace:
+        if in_stop_grace or uim_says_idle:
             # Ground truth is already idle here; no hold to track or honor.
             self._post_cook_hold = None
         else:

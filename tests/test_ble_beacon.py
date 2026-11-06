@@ -253,6 +253,27 @@ def test_uim_hello_is_not_flagged_powered_off():
     assert s["powered_off"] is False
 
 
+def test_uim_idle_is_flagged_as_idle():
+    # Ground truth used to release a stuck post-cook hold (see coordinator.py)
+    # even with no lid cycle - the grill's own physical Rest countdown can
+    # outlast the "get_food" phase/prompt signals by a long time.
+    plain = _pack([(8, 8, 13), (16, 5, 4)])
+    s = _p(_encrypt_segment(plain))
+    assert s["uim_idle"] is True
+
+
+def test_uim_cook_active_is_not_flagged_as_idle():
+    plain = _pack([(8, 8, 13), (16, 5, 7), (25, 5, 4)])
+    s = _p(_encrypt_segment(plain))
+    assert s["uim_idle"] is False
+
+
+def test_uim_powered_off_is_not_flagged_as_idle():
+    plain = _pack([(8, 8, 13), (16, 5, 3)])
+    s = _p(_encrypt_segment(plain))
+    assert s["uim_idle"] is False
+
+
 def test_phase_8_is_lid_open_during_a_wood_fire_cook():
     # Live-validated 2026-11-06: opening the lid mid-cook (wood-fire mode)
     # reports this phase; closing it re-runs ignition (phase 2), not a

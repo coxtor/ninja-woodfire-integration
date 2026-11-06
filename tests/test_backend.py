@@ -1489,6 +1489,38 @@ async def test_get_food_releases_on_lid_cycle_even_if_the_signal_never_clears(ha
 
 
 @pytest.mark.asyncio
+async def test_get_food_releases_once_uim_reports_idle_even_without_a_lid_cycle(hass, entry):
+    # Bug found live 2026-11-06: after a probe-driven cook finished, the grill
+    # ran its own physical "Rest" countdown (with a timer, per the user) and
+    # returned to UimIdle entirely on its own - lid never touched. phase alone
+    # stayed blank throughout (identical to "still resting"), so the hold
+    # never found a release signal and stuck on "get_food" for over an hour.
+    # beacon_uim_idle is the firmware's own ground truth for this case.
+    import time as _time
+
+    c = await _beacon_coordinator(hass, entry)
+    c._cook_seen = True
+    c.beacon_phase = "get_food"
+    c.beacon_lid = False
+    c._beacon_at = _time.monotonic()
+    c._merge_beacon(c.data)
+    assert c.data.grill.state == "get_food"
+
+    # Phase goes blank (as it does for ordinary resting too) but lid never
+    # moves - the old code had no way out of this.
+    c.beacon_phase = None
+    c._merge_beacon(c.data)
+    assert c.data.grill.state == "get_food"
+
+    # The grill's own Rest timer elapses; Uim reports Idle.
+    c.beacon_uim_idle = True
+    c._merge_beacon(c.data)
+    assert c.data.grill.state == "idle"
+    assert c._post_cook_hold is None
+    assert c._cook_seen is False
+
+
+@pytest.mark.asyncio
 async def test_get_food_with_the_lid_already_open_only_needs_it_closed_once(hass, entry):
     # Exception per the user: if the lid was already open when the hold
     # started (e.g. an open-grill mode), there's nothing to "open" - closing
