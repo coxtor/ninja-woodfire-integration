@@ -1454,3 +1454,64 @@ async def test_beacon_end_time_does_not_jitter_with_the_arrival_timing(hass, ent
     c.beacon_remaining = 40                    # a real change (pause or correction) must come through
     c._merge_beacon(c.data)
     assert c.data.grill.end_time_utc != first
+
+
+# --- a probe-driven cook with no duration shows no fabricated timer ---------
+
+@pytest.mark.asyncio
+async def test_a_probe_only_cook_that_never_had_a_timer_shows_no_fake_countdown(hass, entry):
+    import time as _time
+
+    # Live-observed 2026-11-06: once actual cooking started with a probe
+    # target engaged, the grill stopped broadcasting a timer substructure at
+    # all (no total, ever) - this cook plainly has no duration, "until probe
+    # hits target" instead. Fabricating a countdown from the staged duration
+    # would show a value with no relation to the grill's real (nonexistent)
+    # timer.
+    c = await _beacon_coordinator(hass, entry)
+    c.cook_setting_seconds = 900
+    c.cook_setting_probe_enabled[0] = True
+    c.beacon_phase = "cooking"
+    c.beacon_remaining = c.beacon_total = None
+    c._beacon_at = _time.monotonic()
+    c._merge_beacon(c.data)
+    g = c.data.grill
+    assert (g.seconds_set, g.seconds_left, g.timer_estimated) == (None, None, False)
+
+
+@pytest.mark.asyncio
+async def test_a_probe_cook_that_did_have_a_real_duration_freezes_on_dropout(hass, entry):
+    import time as _time
+
+    # A cook with both a real duration AND a probe: a genuine total was seen
+    # earlier (e.g. during preheat), so the later dropout hits the existing
+    # "beacon went quiet mid-cook" freeze, not the new timerless-cook path -
+    # and specifically keeps the real (non-estimated) last reading rather
+    # than switching to a fabricated one.
+    c = await _beacon_coordinator(hass, entry)
+    c.cook_setting_seconds = 900
+    c.cook_setting_probe_enabled[0] = True
+    c.beacon_phase = "preheat"
+    c.beacon_remaining, c.beacon_total = 900, 900
+    c._beacon_at = _time.monotonic()
+    c._merge_beacon(c.data)
+    assert c._real_duration_seen is True
+
+    c.beacon_phase = "cooking"
+    c.beacon_remaining = c.beacon_total = None
+    c._merge_beacon(c.data)
+    g = c.data.grill
+    assert (g.seconds_set, g.seconds_left, g.timer_estimated) == (900, 900, False)
+
+
+@pytest.mark.asyncio
+async def test_a_plain_duration_cook_without_any_probe_still_estimates(hass, entry):
+    import time as _time
+
+    c = await _beacon_coordinator(hass, entry)
+    c.cook_setting_seconds = 900
+    c.beacon_phase = "cooking"
+    c.beacon_remaining = c.beacon_total = None
+    c._beacon_at = _time.monotonic()
+    c._merge_beacon(c.data)
+    assert c.data.grill.timer_estimated is True

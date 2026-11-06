@@ -510,6 +510,18 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
         # the configured duration ourselves (the firmware's timer also only
         # starts after preheat).
         grill = state.grill
+        if self.beacon_total is not None:
+            self._real_duration_seen = True
+        # A probe driving the cook with no duration ever seen from the grill
+        # itself means this cook plainly has no timer - fabricating one from
+        # the staged duration below would show a value with nothing behind
+        # it, and one that visibly jumps the moment the beacon confirms there
+        # never was a real timer to begin with.
+        # cook_setting_probe_enabled, not live_or_staged_probe_enabled: the
+        # latter's "live" branch reads state.probes, which this method
+        # itself builds further down - too late to consult here.
+        probe_driving = any(self.cook_setting_probe_enabled[: len(self.beacon_probes)])
+        timerless_probe_cook = probe_driving and not self._real_duration_seen
         if self.beacon_remaining is not None and not in_stop_grace:
             # Without a usable total (a meat probe active) keep the staged
             # duration, but never one shorter than what is still to come.
@@ -522,7 +534,7 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
             )
             grill.timer_estimated = False
             self._local_cook_end = None
-        elif grill.state == "cooking" and not (
+        elif grill.state == "cooking" and not timerless_probe_cook and not (
             bool(grill.seconds_set) and not grill.timer_estimated
         ):
             # Start the countdown only once the lid is closed after loading — the
@@ -671,6 +683,14 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
         self._preheat_fired = False
         self._preheat_started_at: float | None = None
         self._halftime_fired = False
+        # Live-observed 2026-11-06: a probe-driven cook (no fixed duration,
+        # "cook until target") never reports a total once actual cooking
+        # starts - it held the staged duration during preheat, then the
+        # timer substructure vanished entirely. Without this, the merge
+        # below would fabricate a countdown from the staged duration anyway,
+        # producing a value with no relation to the real (nonexistent) grill
+        # timer that visibly jumps once the beacon stops providing one.
+        self._real_duration_seen = False
         self._probe_start_temp: list[float | None] = [None, None]
         self._probe_target: list[int | None] = [None, None]
         self._probe_halfway_fired = [False, False]
@@ -692,6 +712,10 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
         self._halftime_fired = bool(
             g.seconds_set and g.seconds_left is not None and g.seconds_left <= g.seconds_set / 2
         )
+        # A restart mid-cook can't know whether a prior real duration was
+        # ever seen; a non-estimated timer already present is the only
+        # evidence available, so that's what's trusted here.
+        self._real_duration_seen = bool(g.seconds_set) and not g.timer_estimated
         for idx, probe in enumerate(state.probes.probes[:2]):
             target = probe.target.setpoint
             if not probe.active or target is None:
