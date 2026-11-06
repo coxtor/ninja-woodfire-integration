@@ -52,14 +52,18 @@ Matching Lovelace card: [ninja-woodfire-card](https://github.com/coxtor/ninja-wo
   the probe-target mechanism. It fires off a plugged-in probe's actual
   temperature regardless of cook style, so it also works as a simple
   thermometer alert during a time-based cook.
+- **Pellet-refill reminder** — a bonus feature not in the vendor app:
+  `number.pellet_reminder_interval` / `number.pellet_reminder_count` (0 =
+  off) nudge you to check the hopper every N minutes of cook time while
+  Smoke is on, up to a configured number of times per cook.
 - **Diagnostics** — connection, backend, last report, Wi-Fi signal, poll health.
 - **Events** for automations: `cook_started`, `preheat_complete`,
   `cook_halftime`, `cook_done`, `probe_halfway`, `probe_target_reached`,
-  `probe_alarm`, `probe_resting_started`, `prompt` (all prefixed
-  `ninja_woodfire_`). `probe_resting_started` fires once a probe enters the
-  grill's own 300s post-target Rest window — the only part of a probe-driven
-  cook with a real countdown, shown on the grill's own display but never
-  surfaced by the app's own UI. Every event also
+  `probe_alarm`, `probe_resting_started`, `pellet_refill_reminder`, `prompt`
+  (all prefixed `ninja_woodfire_`). `probe_resting_started` fires once a
+  probe enters the grill's own 300s post-target Rest window — the only part
+  of a probe-driven cook with a real countdown, shown on the grill's own
+  display but never surfaced by the app's own UI. Every event also
   carries a full status snapshot (`grill_state`, `phase`, `grill_temp`,
   `seconds_left`/`seconds_set`, `probe0_temp`/`probe1_temp` + their active
   targets), so a single event has everything a notification needs without

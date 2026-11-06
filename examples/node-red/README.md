@@ -19,6 +19,7 @@ notification each:
 | `ninja_woodfire_prompt` | Display prompt (add / flip / get food) |
 | `ninja_woodfire_probe_alarm` | Probe alarm threshold reached (works independently of a probe target, even during a time-based cook) |
 | `ninja_woodfire_probe_resting_started` | A probe entered the grill's own 300s post-target Rest window (the only part of a probe-driven cook with a real countdown) |
+| `ninja_woodfire_pellet_refill_reminder` | Bonus feature (not in the vendor app): periodic nudge to check the pellet hopper during a Woodfire/smoke cook |
 
 Every event also carries a full status snapshot (`grill_state`, `phase`,
 `grill_temp`, `seconds_left`/`seconds_set`, `probe0_temp`/`probe1_temp` +
