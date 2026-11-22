@@ -103,6 +103,16 @@ _UIM_POWERED_OFF = 3
 _UIM_POWERING_OFF = 9
 _UIM_IDLE = 4
 
+# GCCookState.progress (0-100%), the firmware's own phase-progress counter -
+# bit-exact live-validated 2026-11-06 against the app's own log at 9 samples
+# (3 states x {0,12,25}). Was initially left undecoded here on the reasoning
+# that the "cooking" phase already derives a progress from elapsed/total
+# time (a finer, more reliable source than this field's ~12% steps) - true
+# for "cooking", but preheat duration depends on starting/target temp, which
+# the integration has no time-based substitute for at all. Without this
+# field, a local BLE preheat always showed 0%/unavailable progress.
+_PHASE_PROGRESS = (30, 7)
+
 # Mapped against a full cook captured over the air (phase/prompt confirmed
 # against the grill display): preheat->add food->cooking->flip->done->get food.
 _PHASE_MAP = {2: "ignition", 3: "preheat", 4: "cooking", 5: "get_food", 8: "lid_open"}  # 0 == idle/done; off == no beacon
@@ -276,6 +286,7 @@ def parse_beacon(mfg: bytes | None, key: bytes, iv: bytes) -> dict | None:
         "probe1_temp": _probe_c(_bitread(plain, *_PROBE1)),
         "lid_open": bool(_bitread(plain, *_LID)),
         "phase": _PHASE_MAP.get(_bitread(plain, *_PHASE)),
+        "phase_progress": max(0, min(100, _bitread(plain, *_PHASE_PROGRESS))),
         "prompt": _PROMPT_MAP.get(_bitread(plain, *_PROMPT)),
         "remaining_s": remaining,
         "total_s": total,

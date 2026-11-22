@@ -1774,6 +1774,23 @@ async def test_preheat_ending_moves_to_cooking_even_with_a_blank_phase(hass, ent
 
 
 @pytest.mark.asyncio
+async def test_preheat_progress_is_populated_from_the_beacon(hass, entry):
+    # Bug found live: sensor.preheat_progress always showed "unavailable"
+    # over local BLE, because nothing ever populated state.cook.progress -
+    # @30 (GCCookState.progress) was bit-exact decoded but never wired past
+    # ble_beacon.py. Unlike "cooking" (which derives progress from
+    # elapsed/total time), preheat has no such substitute at all.
+    import time as _time
+
+    c = await _beacon_coordinator(hass, entry)
+    c.beacon_phase = "preheat"
+    c.beacon_phase_progress = 37
+    c._beacon_at = _time.monotonic()
+    c._merge_beacon(c.data)
+    assert c.data.cook.progress == 37
+
+
+@pytest.mark.asyncio
 async def test_a_blank_phase_mid_cook_does_not_flash_idle_on_a_fresh_poll(hass, entry):
     # Live-observed 2026-11-06 ("springt kurz auf Ready"): the slow GATT poll
     # builds a brand new CombinedState with no grill_state of its own (no

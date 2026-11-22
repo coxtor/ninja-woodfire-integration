@@ -239,6 +239,11 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
         self.beacon_probe_resting_s: list[int | None] = [None, None]
         self.beacon_lid: bool | None = None
         self.beacon_phase: str | None = None
+        # GCCookState.progress (0-100%) - the firmware's own phase-progress
+        # counter. Only used to populate state.cook.progress for preheat,
+        # which has no time-based progress substitute (unlike "cooking",
+        # which derives a finer-grained one from elapsed/total time).
+        self.beacon_phase_progress: int | None = None
         self.beacon_prompt: str | None = None
         # The grill's own cook timer from the beacon: seconds left / set duration.
         self.beacon_remaining: int | None = None
@@ -433,6 +438,7 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
             self.beacon_probe_resting_s[1] = parsed["probe1_resting_s"]
         self.beacon_lid = parsed["lid_open"]
         self.beacon_phase = parsed["phase"]
+        self.beacon_phase_progress = parsed.get("phase_progress")
         self.beacon_prompt = parsed["prompt"]
         self.beacon_remaining = parsed.get("remaining_s")
         self.beacon_total = parsed.get("total_s")
@@ -608,6 +614,11 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
             state.grill.state = "cooking"
         elif self.beacon_phase in ("preheat", "ignition"):
             state.grill.state = self.beacon_phase
+            # No time-based progress substitute exists for preheat (unlike
+            # "cooking") - this is the only source for sensor.preheat_progress
+            # over local BLE.
+            if self.beacon_phase_progress is not None:
+                state.cook.progress = self.beacon_phase_progress
         elif self.beacon_lid and self._cook_seen:
             # Opening the lid mid-cook: the firmware's beacon phase bits read
             # blank/idle while paused, which would otherwise look like the

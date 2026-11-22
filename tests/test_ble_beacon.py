@@ -279,6 +279,22 @@ def test_uim_hello_is_not_flagged_powered_off():
     assert s["powered_off"] is False
 
 
+def test_phase_progress_is_decoded():
+    # GCCookState.progress (0-100%), bit-exact live-validated 2026-11-06
+    # against the app's own log at 9 samples (3 states x {0,12,25}). Used to
+    # populate sensor.preheat_progress over local BLE, which has no
+    # time-based substitute (unlike "cooking").
+    plain = _pack([(8, 8, 13), (25, 5, 3), (30, 7, 25)])
+    s = _p(_encrypt_segment(plain))
+    assert s["phase_progress"] == 25
+
+
+def test_phase_progress_is_clamped_to_100():
+    plain = _pack([(8, 8, 13), (30, 7, 127)])
+    s = _p(_encrypt_segment(plain))
+    assert s["phase_progress"] == 100
+
+
 def test_uim_idle_is_flagged_as_idle():
     # Ground truth used to release a stuck post-cook hold (see coordinator.py)
     # even with no lid cycle - the grill's own physical Rest countdown can
