@@ -408,6 +408,41 @@ async def test_beacon_phase_and_prompt_merge_locally(hass, entry):
 
 
 @pytest.mark.asyncio
+async def test_cook_start_logs_the_beacons_that_caused_it(hass, entry, caplog):
+    # A spurious "cook started" (grill waking up with a bogus phase) must be
+    # traceable: the triggering advertisement is logged raw + decrypted.
+    import logging
+    from unittest.mock import AsyncMock
+    from pytest_homeassistant_custom_component.common import async_capture_events
+    from custom_components.ninja_woodfire.coordinator import NinjaWoodfireCoordinator
+    from custom_components.ninja_woodfire.const import EVENT_COOK_STARTED
+    from custom_components.ninja_woodfire._lib.api.ble_beacon import parse_beacon
+    from custom_components.ninja_woodfire._lib.capabilities import WOODFIRE_PRO_XL
+
+    ble = AsyncMock()
+    idle = mk_state()
+    idle.online = True
+    ble.get_combined_state.return_value = idle
+    c = NinjaWoodfireCoordinator(hass, entry, None, DSN, WOODFIRE_PRO_XL, 0, ble=ble,
+                                 beacon_slot=_BEACON_SLOT)
+    await c.async_refresh()
+    c._prev_grill_state = "idle"
+    started = async_capture_events(hass, EVENT_COOK_STARTED)
+
+    caplog.set_level(logging.WARNING, logger="custom_components.ninja_woodfire")
+    c.update_beacon(_BEACON_NOPROBE_OPEN)   # no cook phase: nothing logged
+    assert "beacons (oldest first)" not in caplog.text
+    c.update_beacon(_BEACON_PREHEAT)
+    await hass.async_block_till_done()
+
+    assert len(started) == 1
+    plain = parse_beacon(_BEACON_PREHEAT, *_BEACON_SLOT)["plain_hex"]
+    assert f"ct={_BEACON_PREHEAT.hex()} pt={plain}" in caplog.text
+    assert f"ct={_BEACON_NOPROBE_OPEN.hex()}" in caplog.text   # history, not just the last frame
+    assert "cook_started (prev='idle', now='preheat'" in caplog.text
+
+
+@pytest.mark.asyncio
 async def test_beacon_prompt_fires_a_prompt_event(hass, entry):
     from unittest.mock import AsyncMock
     from pytest_homeassistant_custom_component.common import async_capture_events

@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections import deque
 from collections.abc import AsyncIterator, Awaitable
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
@@ -76,6 +77,7 @@ _AWS_RETRY_S = 60
 _BLE_RETRY_S = 60
 # How long a passively-scanned advertisement beacon reading stays valid.
 _BEACON_TTL_S = 60
+_BEACON_HISTORY_LEN = 20
 # A preheat/ignition this short can only mean it was skipped at the grill's
 # own panel (hold Start): the firmware's own `is_prehaet_skipped` flag only
 # reflects an app/HA-issued skip, not this hardware one, so the duration is
@@ -262,6 +264,10 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
         # pasted key bundle. None -> no beacon decode (probe/lid/phase stay unknown).
         self.beacon_slot = beacon_slot
         self._beacon_at: float = 0.0
+        # Recent decoded beacons (wall time, raw ciphertext, plaintext, summary),
+        # dumped to the log when a cook start is detected so a spurious start
+        # can be traced back to the exact advertisement that caused it.
+        self._beacon_history: deque[str] = deque(maxlen=_BEACON_HISTORY_LEN)
         # Last time we heard anything from the grill (beacon or a successful
         # connect). Drives the "offline / powered off" indication over BLE.
         self._last_contact_m: float = 0.0
@@ -444,6 +450,13 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
         self.beacon_total = parsed.get("total_s")
         self.beacon_powered_off = bool(parsed.get("powered_off"))
         self.beacon_uim_idle = bool(parsed.get("uim_idle"))
+        self._beacon_history.append(
+            f"{dt_util.utcnow().isoformat(timespec='milliseconds')} "
+            f"ct={bytes(mfg).hex()} pt={parsed.get('plain_hex')} "
+            f"phase={parsed['phase']} lid={parsed['lid_open']} prompt={parsed['prompt']} "
+            f"probes={self.beacon_probes} uim_idle={self.beacon_uim_idle} "
+            f"off={self.beacon_powered_off}"
+        )
         if _LOGGER.isEnabledFor(logging.DEBUG):
             _LOGGER.debug(
                 "Beacon decoded: mfg_len=%d phase=%r lid=%r prompt=%r probes=%r timer=%r/%r "
@@ -464,6 +477,18 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
             if self.data.online:
                 self._emit_lifecycle_events(self.data)
             self.async_update_listeners()
+
+    def _dump_beacon_history(self, reason: str) -> None:
+        """Log the recent beacons that led up to a cook-state decision."""
+        if self.beacon_slot is None:
+            return
+        if not self._beacon_history:
+            _LOGGER.warning("Grill %s: %s; no beacons received yet", self.dsn, reason)
+            return
+        _LOGGER.warning(
+            "Grill %s: %s; last %d beacons (oldest first):\n  %s",
+            self.dsn, reason, len(self._beacon_history), "\n  ".join(self._beacon_history),
+        )
 
     def _steady_end(self, remaining: int) -> int | None:
         """End timestamp for `remaining` seconds, without +-1 s arrival jitter.
@@ -565,6 +590,8 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
         # food") in its beacon; honoring it would fabricate an active state and
         # fire spurious prompt / cook-done events with no cook running.
         if not in_stop_grace and self.beacon_phase in ("cooking", "preheat", "ignition"):
+            if not self._cook_seen:
+                self._dump_beacon_history(f"beacon phase {self.beacon_phase!r} marks a cook as seen")
             self._cook_seen = True
             self._likely_asleep = False
         # A fresh beacon is a full snapshot of its own fields: a cleared prompt
@@ -996,6 +1023,7 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
         if active and (prev not in ACTIVE_STATES or self._new_cook):
             self._new_cook = False
             self._reset_cook_flags()
+            self._dump_beacon_history(f"cook_started (prev={prev!r}, now={g!r}, backend={self.backend})")
             fire(EVENT_COOK_STARTED, {**common, "seconds_set": grill.seconds_set, "smoke": grill.smoke})
 
         if active and is_preheating(state):

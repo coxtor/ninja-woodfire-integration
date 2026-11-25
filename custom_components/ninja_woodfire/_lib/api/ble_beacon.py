@@ -282,6 +282,8 @@ def parse_beacon(mfg: bytes | None, key: bytes, iv: bytes) -> dict | None:
         if probe1_state == "resting":
             probe1_resting_s = _bitread(plain, *_PROBE1_RESTING_SECONDS)
     return {
+        # Decrypted payload (mfg1, plus mfg2 when present) - for diagnostics only.
+        "plain_hex": plain.hex(),
         "probe0_temp": _probe_c(_bitread(plain, *_PROBE0)),
         "probe1_temp": _probe_c(_bitread(plain, *_PROBE1)),
         "lid_open": bool(_bitread(plain, *_LID)),
